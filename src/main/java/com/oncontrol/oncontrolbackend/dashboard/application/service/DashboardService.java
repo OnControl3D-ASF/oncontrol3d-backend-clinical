@@ -89,8 +89,13 @@ public class DashboardService {
             totalPatients += doctorTotalPatients;
             activePatients += doctorActivePatients;
             
-            // Get appointments for this doctor
-            List<Appointment> doctorAppointments = appointmentRepository.findByDoctorId(doctor.getId());
+            // Get appointments for this doctor. Appointment.doctor references the
+            // underlying Profile, not the DoctorProfile, so resolve the profile pk
+            // first (doctor.getId() is the doctor_profile id and never matches).
+            Long doctorProfilePk = doctorProfileRepository.findById(doctor.getId())
+                    .map(dp -> dp.getProfile().getId())
+                    .orElse(doctor.getId());
+            List<Appointment> doctorAppointments = appointmentRepository.findByDoctorId(doctorProfilePk);
             int totalAppts = doctorAppointments.size();
             int upcomingAppts = (int) doctorAppointments.stream()
                     .filter(a -> a.getAppointmentDate().isAfter(LocalDateTime.now()))
