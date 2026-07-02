@@ -40,6 +40,9 @@ public class MedicalHistoryService {
      */
     public HistoryEntryResponse createHistoryEntry(Long patientId, Long doctorId, CreateHistoryEntryRequest request) {
         log.info("Creating medical history entry for patient {}", patientId);
+        // Only the patient, their doctor, or the org may write to this history
+        // (was missing: any authenticated user could write to any patient).
+        authorizationService.requirePatientAccess(patientId);
 
         PatientProfile patient = patientProfileRepository.findById(patientId)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
@@ -114,6 +117,8 @@ public class MedicalHistoryService {
      */
     public AllergyResponse createAllergy(Long patientId, CreateAllergyRequest request) {
         log.info("Creating allergy for patient {}", patientId);
+        // Same guard as createHistoryEntry (was missing).
+        authorizationService.requirePatientAccess(patientId);
 
         PatientProfile patient = patientProfileRepository.findById(patientId)
                 .orElseThrow(() -> new IllegalArgumentException("Patient not found"));
