@@ -10,6 +10,9 @@ import com.oncontrol.oncontrolbackend.profiles.domain.repository.ProfileReposito
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.DoctorProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.PatientProfileRepository;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.AuthorizationService;
+import com.oncontrol.oncontrolbackend.medicalrecords.domain.model.HistoryEntryType;
+import com.oncontrol.oncontrolbackend.medicalrecords.domain.model.MedicalHistoryEntry;
+import com.oncontrol.oncontrolbackend.medicalrecords.domain.repository.MedicalHistoryRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,6 +32,7 @@ public class AppointmentService {
     private final DoctorProfileRepository doctorProfileRepository;
     private final PatientProfileRepository patientProfileRepository;
     private final AuthorizationService authorizationService;
+    private final MedicalHistoryRepository medicalHistoryRepository;
 
     /** Resolve a DoctorProfile.id (used by the API/frontend) to its underlying Profile. */
     private Profile resolveDoctorProfile(Long doctorProfileId) {
@@ -120,10 +124,53 @@ public class AppointmentService {
             appointment.setCancelledAt(java.time.LocalDateTime.now());
         } else if (status == AppointmentStatus.COMPLETED) {
             appointment.setCompletedAt(java.time.LocalDateTime.now());
+            recordConsultationInHistory(appointment);
         }
 
         appointment = appointmentRepository.save(appointment);
         return mapToAppointmentResponse(appointment);
+    }
+
+    /**
+     * When an appointment is completed, log it in the patient's medical history
+     * automatically so the timeline grows with real activity. Best-effort: a
+     * history failure must never block completing the appointment.
+     */
+    private void recordConsultationInHistory(Appointment appointment) {
+        try {
+            var patientProfile = patientProfileRepository
+                    .findByProfileId(appointment.getPatient().getId()).orElse(null);
+            var doctorProfile = doctorProfileRepository
+                    .findByProfileId(appointment.getDoctor().getId()).orElse(null);
+            if (patientProfile == null) {
+                log.warn("No PatientProfile for profile {}, skipping auto history entry",
+                        appointment.getPatient().getId());
+                return;
+            }
+
+            String typeName = appointment.getType() != null
+                    ? appointment.getType().getDisplayName()
+                    : "Consulta";
+            String description = "Cita completada con "
+                    + appointment.getDoctor().getFullName()
+                    + (appointment.getNotes() != null && !appointment.getNotes().isBlank()
+                        ? ". Notas: " + appointment.getNotes()
+                        : ".");
+
+            medicalHistoryRepository.save(MedicalHistoryEntry.builder()
+                    .patient(patientProfile)
+                    .doctor(doctorProfile)
+                    .type(HistoryEntryType.CONSULTATION)
+                    .date(appointment.getAppointmentDate().toLocalDate())
+                    .title(typeName)
+                    .description(description)
+                    .category("Cita")
+                    .isActive(true)
+                    .build());
+        } catch (Exception e) {
+            log.warn("Could not auto-create history entry for appointment {}: {}",
+                    appointment.getId(), e.getMessage());
+        }
     }
 
     /**
