@@ -4,10 +4,12 @@ import com.oncontrol.oncontrolbackend.iam.application.dto.LoginRequest;
 import com.oncontrol.oncontrolbackend.iam.application.dto.RegisterRequest;
 import com.oncontrol.oncontrolbackend.iam.application.service.AuthService;
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.LoginRateLimiter;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.JwtService;
 import com.oncontrol.oncontrolbackend.profiles.application.service.ProfileService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -29,6 +31,16 @@ public class AuthController {
     private final AuthService authService;
     private final ProfileService profileService;
     private final JwtService jwtService;
+    private final LoginRateLimiter loginRateLimiter;
+
+    /** Client key for rate limiting: first X-Forwarded-For hop (Render proxy) or the socket address. */
+    private String clientKey(HttpServletRequest http) {
+        String forwarded = http.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) {
+            return forwarded.split(",")[0].trim();
+        }
+        return http.getRemoteAddr();
+    }
 
     @PostMapping("/register/organization")
     @Operation(summary = "Register a new organization", description = "Register a new organization (company)")
@@ -58,7 +70,16 @@ public class AuthController {
 
     @PostMapping("/login")
     @Operation(summary = "Login", description = "Login for organizations and profiles (doctors/patients)")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request, HttpServletRequest http) {
+        // Brute-force protection: 5 attempts per minute per client IP.
+        String client = clientKey(http);
+        if (loginRateLimiter.isBlocked(client)) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("message", "Demasiados intentos. Espera un minuto e inténtalo de nuevo.");
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(errorResponse);
+        }
+        loginRateLimiter.recordAttempt(client);
+
         try {
             // Try organization login first
             Object result = authService.login(request);
@@ -77,7 +98,8 @@ public class AuthController {
                 response.put("token", token);
                 response.put("type", "ORGANIZATION");
                 response.put("message", "Login successful");
-                
+
+                loginRateLimiter.reset(client);
                 return ResponseEntity.ok(response);
             }
         } catch (IllegalArgumentException e) {
@@ -109,7 +131,8 @@ public class AuthController {
                 response.put("profile", profile);
                 response.put("token", token);
                 response.put("message", "Login successful");
-                
+
+                loginRateLimiter.reset(client);
                 return ResponseEntity.ok(response);
             } catch (IllegalArgumentException e2) {
                 Map<String, String> errorResponse = new HashMap<>();
