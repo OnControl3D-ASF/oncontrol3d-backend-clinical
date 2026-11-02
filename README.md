@@ -71,7 +71,7 @@ OnControl es una plataforma desarrollada en **Java 21** con **Spring Boot**, sig
 POST /api/auth/register/organization
 {
   "email": "admin@hospital.com",
-  "password": "password123",
+  "password": "<tu-contraseña>",
   "organizationName": "Hospital Central",
   "country": "México",
   "city": "Ciudad de México"
@@ -83,7 +83,7 @@ POST /api/auth/register/organization
 POST /api/organizations/1/doctors
 {
   "email": "dr.garcia@hospital.com",
-  "password": "password123",
+  "password": "<tu-contraseña>",
   "firstName": "Carlos",
   "lastName": "García",
   "specialization": "Oncología",
@@ -96,7 +96,7 @@ POST /api/organizations/1/doctors
 POST /api/doctors/1/patients
 {
   "email": "juan.perez@email.com",
-  "password": "password123",
+  "password": "<tu-contraseña>",
   "firstName": "Juan",
   "lastName": "Pérez",
   "bloodType": "O+",
@@ -106,23 +106,25 @@ POST /api/doctors/1/patients
 
 ---
 
-## 🔐 Credenciales de Acceso (Demo)
+## 🔐 Cuentas de Demostración
+
+Solo existen en desarrollo local, cuando `APP_DATA_SEEDING_ENABLED=true`, con una base de datos vacía. El seeder está desactivado por defecto y requiere `SEED_USER_PASSWORD`.
 
 ### 🏢 Organización (Administrador)
 - **Email**: `admin@hospital.com`
-- **Contraseña**: `password123` 
+- **Contraseña**: la definida en `SEED_USER_PASSWORD`
 
 ### 🩺 Médicos
 - **Doctor 1**: `dr.garcia@hospital.com`
 - **Doctor 2**: `dr.rodriguez@hospital.com`
-- **Contraseña**: `password123` 
+- **Contraseña**: la definida en `SEED_USER_PASSWORD`
 
 ### 👤 Pacientes
 - **Paciente 1**: `juan.perez@email.com`
 - **Paciente 2**: `ana.martinez@email.com`
 - **Paciente 3**: `pedro.lopez@email.com`
 - **Paciente 4**: `laura.sanchez@email.com`
-- **Contraseña**: `password123`
+- **Contraseña**: la definida en `SEED_USER_PASSWORD`
 
 ---
 
@@ -132,13 +134,13 @@ POST /api/doctors/1/patients
    ```sql
    CREATE DATABASE OnControlSem;
    ```
-2. **Configuración (`application.properties`):**
-   ```properties
-   spring.datasource.url=jdbc:mysql://localhost:3306/OnControlSem
-   spring.datasource.username=tu_usuario
-   spring.datasource.password=tu_password
-   authorization.jwt.secret=tu_clave_secreta_de_256_bits
+2. **Variables de entorno obligatorias:**
+   ```bash
+   export DB_USERNAME=tu_usuario
+   export DB_PASSWORD=<tu-contraseña>
+   export JWT_SECRET="$(openssl rand -hex 32)"
    ```
+   El servicio no arranca si falta `DB_PASSWORD` o `JWT_SECRET`. No guardes estos valores en el repositorio.
 3. **Ejecución:**
    ```bash
    ./mvnw spring-boot:run

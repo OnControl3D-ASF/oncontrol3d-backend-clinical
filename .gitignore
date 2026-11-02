@@ -38,3 +38,8 @@ build/
 
 # Custom logs
 *.log
+
+# Local environment
+.env
+.env.*
+!.env.example

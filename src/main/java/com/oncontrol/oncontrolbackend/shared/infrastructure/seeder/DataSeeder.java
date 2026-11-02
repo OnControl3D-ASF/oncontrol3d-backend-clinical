@@ -26,6 +26,7 @@ import com.oncontrol.oncontrolbackend.medicalrecords.domain.repository.MedicalHi
 import com.oncontrol.oncontrolbackend.medicalrecords.domain.repository.AllergyRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -40,8 +41,8 @@ import java.time.LocalTime;
  * DataSeeder - Crea datos iniciales para desarrollo y testing
  *
  * Controlado por la propiedad `app.data.seeding.enabled`.
- * En PRODUCCIÓN debe estar en `false` (variable de entorno APP_DATA_SEEDING_ENABLED=false)
- * para no crear cuentas demo con contraseñas conocidas.
+ * Está desactivado por defecto. Para desarrollo local se activa con
+ * APP_DATA_SEEDING_ENABLED=true y requiere definir SEED_USER_PASSWORD.
  */
 @Component
 @ConditionalOnProperty(name = "app.data.seeding.enabled", havingValue = "true")
@@ -62,12 +63,19 @@ public class DataSeeder implements CommandLineRunner {
     private final AllergyRepository allergyRepository;
     private final PasswordEncoder passwordEncoder;
 
+    @Value("${app.data.seeding.password:}")
+    private String seedPassword;
+
     @Override
     public void run(String... args) {
         // Solo ejecutar si la base de datos está vacía
         if (userRepository.count() > 0) {
             log.info("💡 Database already has data. Skipping seeder.");
             return;
+        }
+
+        if (seedPassword == null || seedPassword.isBlank()) {
+            throw new IllegalStateException("SEED_USER_PASSWORD is required when data seeding is enabled");
         }
 
         log.info("🌱 Starting DataSeeder...");
@@ -150,14 +158,14 @@ public class DataSeeder implements CommandLineRunner {
             log.info("   - 5 Medical History Entries");
             log.info("   - 3 Allergies");
             log.info("");
-            log.info("🔐 Login credentials:");
-            log.info("   Organization: admin@hospital.com / password123");
-            log.info("   Doctor 1: dr.garcia@hospital.com / password123");
-            log.info("   Doctor 2: dr.rodriguez@hospital.com / password123");
-            log.info("   Patient 1: juan.perez@email.com / password123");
-            log.info("   Patient 2: ana.martinez@email.com / password123");
-            log.info("   Patient 3: pedro.lopez@email.com / password123");
-            log.info("   Patient 4: laura.sanchez@email.com / password123");
+            log.info("🔐 Login accounts (password: SEED_USER_PASSWORD):");
+            log.info("   Organization: admin@hospital.com");
+            log.info("   Doctor 1: dr.garcia@hospital.com");
+            log.info("   Doctor 2: dr.rodriguez@hospital.com");
+            log.info("   Patient 1: juan.perez@email.com");
+            log.info("   Patient 2: ana.martinez@email.com");
+            log.info("   Patient 3: pedro.lopez@email.com");
+            log.info("   Patient 4: laura.sanchez@email.com");
             
         } catch (Exception e) {
             log.error("❌ Error in DataSeeder: {}", e.getMessage(), e);
@@ -167,7 +175,7 @@ public class DataSeeder implements CommandLineRunner {
     private User createOrganization() {
         User organization = User.builder()
                 .email("admin@hospital.com")
-                .password(passwordEncoder.encode("password123"))
+                .password(passwordEncoder.encode(seedPassword))
                 .organizationName("Hospital Central")
                 .country("México")
                 .city("Ciudad de México")
@@ -196,7 +204,7 @@ public class DataSeeder implements CommandLineRunner {
                 .user(organization)
                 .profileType(ProfileType.DOCTOR)
                 .email(email)
-                .password(passwordEncoder.encode("password123"))
+                .password(passwordEncoder.encode(seedPassword))
                 .firstName(firstName)
                 .lastName(lastName)
                 .phone("+52 55 " + (int)(Math.random() * 9000000 + 1000000))
@@ -235,7 +243,7 @@ public class DataSeeder implements CommandLineRunner {
                 .user(doctorProfile.getOrganization())
                 .profileType(ProfileType.PATIENT)
                 .email(email)
-                .password(passwordEncoder.encode("password123"))
+                .password(passwordEncoder.encode(seedPassword))
                 .firstName(firstName)
                 .lastName(lastName)
                 .phone("+52 55 " + (int)(Math.random() * 9000000 + 1000000))
