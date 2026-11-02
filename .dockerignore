@@ -1,0 +1,12 @@
+.git
+.github
+target
+.idea
+.vscode
+.env
+.env.*
+*.md
+Jenkinsfile
+Dockerfile
+.dockerignore
+.trivyignore
