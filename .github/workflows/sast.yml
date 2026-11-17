@@ -17,12 +17,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Semgrep scan
+      # Full report with every severity (INFO, WARNING, ERROR) for review.
+      - name: Semgrep report (all severities)
         run: >
           semgrep scan
           --config p/java
           --metrics=off
-          --error
           --json --output semgrep.json
           .
 
@@ -32,3 +32,15 @@ jobs:
         with:
           name: semgrep-report
           path: semgrep.json
+
+      # Blocking policy (docs/seguridad-hallazgos.md): Semgrep's highest severity,
+      # ERROR, is the equivalent of HIGH/CRITICAL and fails the build.
+      # WARNING/INFO findings stay in the report without blocking.
+      - name: Fail on ERROR-severity findings
+        run: >
+          semgrep scan
+          --config p/java
+          --metrics=off
+          --severity ERROR
+          --error
+          .

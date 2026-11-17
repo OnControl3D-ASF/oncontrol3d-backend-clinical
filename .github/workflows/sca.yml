@@ -47,7 +47,11 @@ jobs:
           name: trivy-report
           path: trivy.json
 
-      - name: Fail on fixable HIGH or CRITICAL vulnerabilities
+      # Blocking policy (docs/seguridad-hallazgos.md):
+      #   1. ANY CRITICAL dependency vulnerability blocks, even without an upstream fix.
+      #   2. HIGH blocks when a fixed version exists.
+      # .trivyignore holds the temporarily accepted risks; every entry expires.
+      - name: Fail on CRITICAL vulnerabilities
         run: >
           docker run --rm
           -v "$GITHUB_WORKSPACE:/src"
@@ -55,4 +59,14 @@ jobs:
           -v trivy-cache:/root/.cache
           -w /src
           "$TRIVY_IMAGE"
-          fs . --scanners vuln --offline-scan --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
+          fs . --scanners vuln --offline-scan --severity CRITICAL --exit-code 1
+
+      - name: Fail on fixable HIGH vulnerabilities
+        run: >
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/src"
+          -v "$HOME/.m2:/root/.m2:ro"
+          -v trivy-cache:/root/.cache
+          -w /src
+          "$TRIVY_IMAGE"
+          fs . --scanners vuln --offline-scan --severity HIGH --ignore-unfixed --exit-code 1
