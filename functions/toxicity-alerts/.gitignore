@@ -1,0 +1,3 @@
+target/
+# Local Functions host settings may contain connection details.
+local.settings.json

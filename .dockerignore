@@ -10,3 +10,6 @@ Jenkinsfile
 Dockerfile
 .dockerignore
 .trivyignore
+
+# Azure Function lives in its own Maven project and is not part of the service image
+functions/
