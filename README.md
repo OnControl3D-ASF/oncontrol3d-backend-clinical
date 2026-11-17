@@ -140,7 +140,9 @@ Solo existen en desarrollo local, cuando `APP_DATA_SEEDING_ENABLED=true`, con un
    export DB_PASSWORD=<tu-contraseña>
    export JWT_SECRET="$(openssl rand -hex 32)"
    ```
-   El servicio no arranca si falta `DB_PASSWORD` o `JWT_SECRET`. No guardes estos valores en el repositorio.
+   El servicio no arranca si falta `DB_PASSWORD` o `JWT_SECRET`, ni si `JWT_SECRET` tiene menos de 32 bytes.
+   Alternativa: copiá `.env.example` a `.env` (ignorado por git) y completá los valores; se carga automáticamente.
+   No guardes estos valores en el repositorio.
 3. **Ejecución:**
    ```bash
    ./mvnw spring-boot:run
