@@ -46,6 +46,15 @@ public class ScenarioWorld {
         this.lastResult = result;
     }
 
+    /** Name of the (first) patient assigned to the given doctor in this scenario. */
+    public String patientOf(String doctorName) {
+        return actors.values().stream()
+                .filter(a -> doctorName.equals(a.doctorName()))
+                .map(Actor::name)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("No patient for doctor " + doctorName));
+    }
+
     public Long treatmentId() {
         return treatmentId;
     }
