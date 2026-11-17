@@ -18,8 +18,8 @@ Excepciones: `.trivyignore`, con justificación y fecha de vencimiento obligator
 
 | # | Hallazgo | Severidad | Antes | Corrección | Después |
 |---|---|---|---|---|---|
-| 1 | `JWT_SECRET` con valor por defecto hardcodeado (`${JWT_SECRET:5f61…}`): cualquiera que lea el repo puede firmar tokens válidos (bypass total de autenticación) | CRITICAL | Default en `application.properties` y en 2 commits del historial | Default eliminado; arranque bloqueado si falta, está vacío o tiene < 32 bytes (`RequiredSecretsEnvironmentPostProcessor`, `JwtService.validateSecret`) | 0 en el árbol. **Rotar `JWT_SECRET`** en todo ambiente que haya usado el default (el historial no se puede limpiar sin reescribirlo) |
-| 2 | `DB_PASSWORD` con default `postgres` | HIGH | `${DB_PASSWORD:postgres}` | Default eliminado; arranque bloqueado si falta | 0 |
+| 1 | `JWT_SECRET` con valor por defecto hardcodeado (placeholder de Spring con un UUID como valor de respaldo): cualquiera que lea el repo puede firmar tokens válidos (bypass total de autenticación) | CRITICAL | Default en `application.properties` y en 2 commits del historial | Default eliminado; arranque bloqueado si falta, está vacío o tiene < 32 bytes (`RequiredSecretsEnvironmentPostProcessor`, `JwtService.validateSecret`) | 0 en el árbol. **Rotar `JWT_SECRET`** en todo ambiente que haya usado el default (el historial no se puede limpiar sin reescribirlo) |
+| 2 | `DB_PASSWORD` con default `postgres` | HIGH | Placeholder con respaldo `postgres` | Default eliminado; arranque bloqueado si falta | 0 |
 | 3 | Placeholder sin resolver usado como contraseña literal: sin `DB_PASSWORD`, Spring Boot conectaba con el texto `${DB_PASSWORD}` | HIGH | La app intentaba conectar (falla solo si la BD rechaza esa clave) | Validación previa a la creación de beans: `Missing required secrets [DB_PASSWORD]` | Verificado con contenedor: sale con código 1 y mensaje claro |
 | 4 | Seeder activo por defecto con 7 cuentas demo con contraseña conocida (`password123`) | HIGH | `app.data.seeding.enabled=true` | Desactivado por defecto (`APP_DATA_SEEDING_ENABLED`); si se activa exige `SEED_USER_PASSWORD` | 0 cuentas con contraseña conocida |
 | 5 | Contraseñas publicadas en el README | MEDIUM | `password123` ×6 | Reemplazadas por instrucciones con variables de entorno | 0 |
@@ -30,7 +30,7 @@ Excepciones: `.trivyignore`, con justificación y fecha de vencimiento obligator
 | 10 | 24 CVE HIGH en dependencias (Jackson, PostgreSQL JDBC, Log4j2, Tomcat…) | HIGH | 24 | Boot 3.5.16 + overrides de `jackson-bom`, `postgresql`, `log4j2` | 0 |
 | 11 | Imagen base con JDK completo y paquetes de SO vulnerables | HIGH | `eclipse-temurin:21-jdk`: 78 CVE de SO, 845 MB | Runtime `eclipse-temurin:21-jre-alpine` (multi-stage) | 1 CVE de SO (MEDIUM, sin parche), 408 MB |
 | 12 | Contenedor ejecutado como root y sin healthcheck | MEDIUM | `root` | Usuario `app` (uid 10001) y `HEALTHCHECK` sobre `/health` | Verificado `healthy` |
-| 13 | gitleaks no detecta defaults de Spring (`${X_PASSWORD:valor}`), por baja entropía | MEDIUM (brecha de detección) | 0 detecciones sobre `main` | Regla propia `spring-secret-placeholder-default` en `.gitleaks.toml` | Detecta las 2 líneas en `main`; 0 en la rama |
+| 13 | gitleaks no detecta defaults de Spring (placeholder con valor de respaldo en una variable secreta), por baja entropía | MEDIUM (brecha de detección) | 0 detecciones sobre `main` | Regla propia `spring-secret-placeholder-default` en `.gitleaks.toml` | Detecta las 2 líneas en `main`; 0 en la rama |
 | 14 | El gate de imagen solo bloqueaba HIGH/CRITICAL **con parche**: una CRITICAL sin fix pasaba | MEDIUM (política) | `--ignore-unfixed` en el único gate | Gate adicional `--severity CRITICAL` sin `--ignore-unfixed` | Toda CRITICAL bloquea salvo excepción documentada y con vencimiento |
 
 ### Resultados de las herramientas
