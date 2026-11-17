@@ -1,7 +1,8 @@
 name: CI
 
 # Quality pipeline for the Clinical Service:
-#   build -> unit tests -> JaCoCo coverage gate (>= 70% lines) -> SonarCloud quality gate
+#   build -> unit tests -> JaCoCo coverage gate (>= 70% lines) -> BDD + integration tests
+#   (Cucumber + Testcontainers) -> SonarCloud quality gate
 # `mvn verify` FAILS the job if line coverage is below the threshold in pom.xml.
 # The SonarCloud step waits for the quality gate and FAILS the job if it is red.
 
@@ -35,8 +36,28 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Build, unit tests and coverage gate (JaCoCo >= 70%)
+      # verify = unit tests (surefire) + BDD/integration tests (failsafe: Cucumber
+      # scenarios and repository ITs on PostgreSQL via Testcontainers) + JaCoCo gate.
+      - name: Build, unit tests, BDD/integration tests and coverage gate
         run: ./mvnw -B -ntp verify
+
+      - name: BDD summary
+        if: always()
+        run: |
+          if [ -f target/cucumber-reports/cucumber.json ]; then
+            python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          features = json.load(open("target/cucumber-reports/cucumber.json"))
+          rows, passed, total = [], 0, 0
+          for f in features:
+              scenarios = [e for e in f["elements"] if e["type"] == "scenario"]
+              ok = sum(all(s["result"]["status"] == "passed" for s in e["steps"]) for e in scenarios)
+              rows.append(f"| {f['name']} | {ok}/{len(scenarios)} |")
+              passed, total = passed + ok, total + len(scenarios)
+          print(f"### BDD scenarios passed: {passed}/{total}\n\n| Feature | Passed |\n|---|---|")
+          print("\n".join(rows))
+          EOF
+          fi
 
       - name: Coverage summary
         if: always()
@@ -58,7 +79,15 @@ jobs:
           name: test-reports
           path: |
             target/surefire-reports/
+            target/failsafe-reports/
             target/site/jacoco/
+
+      - name: Upload Cucumber reports (HTML + JSON)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cucumber-reports
+          path: target/cucumber-reports/
 
       - name: Cache SonarCloud packages
         if: env.SONAR_TOKEN != ''
