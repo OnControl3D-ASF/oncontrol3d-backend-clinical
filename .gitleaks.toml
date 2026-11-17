@@ -1,0 +1,29 @@
+# Gitleaks configuration: default rules + project-specific additions.
+# Used automatically by `gitleaks git/dir` when run from the repository root.
+
+[extend]
+useDefault = true
+
+# The default ruleset does not flag Spring placeholders with a hardcoded fallback,
+# e.g. ${DB_PASSWORD:postgres} or ${JWT_SECRET:5f61...}: low-entropy values that
+# silently become production secrets when the environment variable is missing.
+[[rules]]
+id = "spring-secret-placeholder-default"
+description = "Secret-like Spring property placeholder with a hardcoded default value"
+regex = '''\$\{[A-Za-z0-9_.-]*(?i:secret|password|passwd|pwd|token|api[_-]?key|private[_-]?key|credentials?)[A-Za-z0-9_.-]*:[^}\s]+\}'''
+keywords = ["secret", "password", "passwd", "pwd", "token", "key", "credential"]
+
+# Test-only signing keys: fake values that only exist in unit/integration tests.
+[[allowlists]]
+description = "Fake JWT signing keys used exclusively by tests"
+regexTarget = "match"
+regexes = [
+  '''test-secret-key-with-at-least-256-bits-0123456789''',
+  '''another-secret-key-with-at-least-256-bits-9876543210''',
+  '''it-only-signing-key-0123456789-abcdefghijklmnopqrstuvwxyz''',
+]
+
+# Build output (git-ignored) is a copy of the sources; scanning it only duplicates findings.
+[[allowlists]]
+description = "Maven build output"
+paths = ['''(^|/)target/''']
