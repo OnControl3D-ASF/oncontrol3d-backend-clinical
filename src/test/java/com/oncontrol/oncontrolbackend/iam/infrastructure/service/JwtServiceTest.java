@@ -11,6 +11,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JwtServiceTest {
@@ -89,5 +90,24 @@ class JwtServiceTest {
 
         assertThatThrownBy(() -> jwtService.extractUsername(forged))
                 .isInstanceOf(SignatureException.class);
+    }
+
+    @Test
+    void validateSecret_acceptsKeysOfAtLeast256Bits() {
+        assertThatCode(() -> jwtService.validateSecret()).doesNotThrowAnyException();
+    }
+
+    @Test
+    void validateSecret_rejectsBlankSecret() {
+        assertThatThrownBy(() -> newJwtService("   ", 60_000L).validateSecret())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("JWT_SECRET is required");
+    }
+
+    @Test
+    void validateSecret_rejectsShortSecret() {
+        assertThatThrownBy(() -> newJwtService("too-short", 60_000L).validateSecret())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("at least 32 bytes");
     }
 }

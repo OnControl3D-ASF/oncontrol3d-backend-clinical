@@ -5,11 +5,13 @@ import com.oncontrol.oncontrolbackend.iam.domain.model.UserRole;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -19,11 +21,30 @@ import java.util.function.Function;
 @Slf4j
 public class JwtService {
 
+    /** HMAC-SHA256 requires a key of at least 256 bits. */
+    static final int MIN_SECRET_BYTES = 32;
+
     @Value("${authorization.jwt.secret}")
     private String secretKey;
 
     @Value("${authorization.jwt.expiration}")
     private Long expiration;
+
+    /**
+     * Fail fast at startup: a missing placeholder already stops the context, but an
+     * empty or short JWT_SECRET would otherwise only fail on the first login.
+     */
+    @PostConstruct
+    void validateSecret() {
+        if (secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException("JWT_SECRET is required and must not be blank");
+        }
+        if (secretKey.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+            throw new IllegalStateException(
+                    "JWT_SECRET must be at least " + MIN_SECRET_BYTES + " bytes (256 bits); "
+                            + "generate one with: openssl rand -hex 32");
+        }
+    }
 
     public String generateToken(User user) {
         Map<String, Object> claims = new HashMap<>();
@@ -103,7 +124,7 @@ public class JwtService {
     }
 
     private SecretKey getSigningKey() {
-        byte[] keyBytes = secretKey.getBytes();
+        byte[] keyBytes = secretKey.getBytes(StandardCharsets.UTF_8);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 }
