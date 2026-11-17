@@ -1,0 +1,58 @@
+name: SCA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # new vulnerabilities can appear without code changes
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_IMAGE: aquasec/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      # Trivy reads the local Maven cache, which avoids rate limits from Maven Central.
+      - name: Resolve dependencies
+        run: sh ./mvnw -B -q dependency:resolve
+
+      - name: Generate full report
+        run: >
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/src"
+          -v "$HOME/.m2:/root/.m2:ro"
+          -v trivy-cache:/root/.cache
+          -w /src
+          "$TRIVY_IMAGE"
+          fs . --scanners vuln --offline-scan --format json --output trivy.json
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report
+          path: trivy.json
+
+      - name: Fail on fixable HIGH or CRITICAL vulnerabilities
+        run: >
+          docker run --rm
+          -v "$GITHUB_WORKSPACE:/src"
+          -v "$HOME/.m2:/root/.m2:ro"
+          -v trivy-cache:/root/.cache
+          -w /src
+          "$TRIVY_IMAGE"
+          fs . --scanners vuln --offline-scan --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1
