@@ -1,0 +1,9 @@
+# Temporarily accepted risks. Each entry expires and must then be reviewed.
+# Spring Framework 6.2 has no listed fix; the fix (7.0.9) requires migrating to Spring Boot 4.
+# Remove these entries after that migration.
+
+# XsltView RCE: the application does not use XsltView.
+CVE-2026-47884 exp:2027-02-01
+
+# SSE stream corruption with view fragments: the application does not use Server-Sent Events.
+CVE-2026-47890 exp:2027-02-01
