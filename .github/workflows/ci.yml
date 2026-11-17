@@ -1,0 +1,80 @@
+name: CI
+
+# Quality pipeline for the Clinical Service:
+#   build -> unit tests -> JaCoCo coverage gate (>= 70% lines) -> SonarCloud quality gate
+# `mvn verify` FAILS the job if line coverage is below the threshold in pom.xml.
+# The SonarCloud step waits for the quality gate and FAILS the job if it is red.
+
+on:
+  push:
+    branches: [main] # feature branches are verified through their PR
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build, test & quality gate
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history for SonarCloud blame data
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build, unit tests and coverage gate (JaCoCo >= 70%)
+        run: ./mvnw -B -ntp verify
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f target/site/jacoco/jacoco.csv ]; then
+            python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import csv
+          rows = list(csv.DictReader(open("target/site/jacoco/jacoco.csv")))
+          missed = sum(int(r["LINE_MISSED"]) for r in rows)
+          covered = sum(int(r["LINE_COVERED"]) for r in rows)
+          print(f"### Line coverage: {covered / (missed + covered):.1%} ({covered}/{missed + covered}) - gate: 70%")
+          EOF
+          fi
+
+      - name: Upload test & coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/site/jacoco/
+
+      - name: Cache SonarCloud packages
+        if: env.SONAR_TOKEN != ''
+        uses: actions/cache@v6
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: SonarCloud analysis (waits for quality gate)
+        if: env.SONAR_TOKEN != ''
+        run: >
+          ./mvnw -B -ntp sonar:sonar
+          -Dsonar.qualitygate.wait=true
+          -Dsonar.qualitygate.timeout=300
+
+      - name: SonarCloud skipped
+        if: env.SONAR_TOKEN == ''
+        run: echo "::warning::SONAR_TOKEN is not configured; SonarCloud quality gate was skipped (see docs/sonarcloud.md)."
