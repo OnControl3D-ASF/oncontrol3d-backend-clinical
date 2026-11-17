@@ -28,6 +28,17 @@
     </scm>
     <properties>
         <java.version>21</java.version>
+
+        <!-- Quality: coverage gate (JaCoCo) and SonarCloud -->
+        <jacoco.version>0.8.16</jacoco.version>
+        <jacoco.line.minimum>0.70</jacoco.line.minimum>
+        <sonar-maven-plugin.version>5.9.0.7382</sonar-maven-plugin.version>
+        <sonar.organization>oncontrol3d-asf</sonar.organization>
+        <sonar.projectKey>OnControl3D-ASF_oncontrol3d-backend-clinical</sonar.projectKey>
+        <sonar.host.url>https://sonarcloud.io</sonar.host.url>
+        <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
+        <!-- Keep Sonar's coverage scope identical to the JaCoCo gate below -->
+        <sonar.coverage.exclusions>**/OncontrolBackendApplication.java,**/shared/infrastructure/seeder/**,**/SecurityConfig.java,**/WebConfig.java,**/OpenApiConfiguration.java</sonar.coverage.exclusions>
     </properties>
     <dependencies>
         <dependency>
@@ -150,6 +161,71 @@
                         </path>
                     </annotationProcessorPaths>
                 </configuration>
+            </plugin>
+
+            <!--
+              Coverage gate: `mvn verify` FAILS if line coverage < ${jacoco.line.minimum}.
+              Excluded from the measured scope (bootstrap/wiring, no business logic):
+                - OncontrolBackendApplication: Spring Boot entry point
+                - shared/infrastructure/seeder: demo data loader (disabled outside demo)
+                - SecurityConfig, WebConfig, OpenApiConfiguration: Spring wiring only
+              Lombok-generated code is ignored via lombok.config (@lombok.Generated).
+            -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>${jacoco.version}</version>
+                <configuration>
+                    <excludes>
+                        <exclude>**/OncontrolBackendApplication.class</exclude>
+                        <exclude>**/shared/infrastructure/seeder/**</exclude>
+                        <exclude>**/SecurityConfig.class</exclude>
+                        <exclude>**/WebConfig.class</exclude>
+                        <exclude>**/OpenApiConfiguration.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>check</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>check</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <rule>
+                                    <element>BUNDLE</element>
+                                    <limits>
+                                        <limit>
+                                            <counter>LINE</counter>
+                                            <value>COVEREDRATIO</value>
+                                            <minimum>${jacoco.line.minimum}</minimum>
+                                        </limit>
+                                    </limits>
+                                </rule>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>${sonar-maven-plugin.version}</version>
             </plugin>
         </plugins>
     </build>
