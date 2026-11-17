@@ -1,10 +1,9 @@
 name: SCA
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_call: # called by cicd.yml for main and release tags
   schedule:
     - cron: "0 6 * * 1" # new vulnerabilities can appear without code changes
 
@@ -16,6 +15,7 @@ env:
 
 jobs:
   trivy:
+    name: Dependency scan (Trivy)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
