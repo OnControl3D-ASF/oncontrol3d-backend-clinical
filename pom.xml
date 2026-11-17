@@ -39,7 +39,26 @@
         <sonar.coverage.jacoco.xmlReportPaths>${project.build.directory}/site/jacoco/jacoco.xml</sonar.coverage.jacoco.xmlReportPaths>
         <!-- Keep Sonar's coverage scope identical to the JaCoCo gate below -->
         <sonar.coverage.exclusions>**/OncontrolBackendApplication.java,**/shared/infrastructure/seeder/**,**/SecurityConfig.java,**/WebConfig.java,**/OpenApiConfiguration.java</sonar.coverage.exclusions>
+
+        <!-- BDD + integration tests (run by failsafe in `verify`) -->
+        <!-- Cucumber 7.x: 8.x requires JUnit 6, while Spring Boot 3.5 ships JUnit 5 -->
+        <cucumber.version>7.34.9</cucumber.version>
+        <!-- Cucumber 7.34 is built against JUnit Platform 1.14 (Boot 3.5 manages 5.12 / 1.12) -->
+        <junit-jupiter.version>5.14.2</junit-jupiter.version>
+        <!-- 1.21.4 overrides Boot's 1.21.3: required for Docker Engine 29 (API >= 1.44) -->
+        <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>io.cucumber</groupId>
+                <artifactId>cucumber-bom</artifactId>
+                <version>${cucumber.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -119,6 +138,45 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- BDD: Cucumber on the JUnit Platform, wired into the Spring context -->
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-java</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-spring</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.cucumber</groupId>
+            <artifactId>cucumber-junit-platform-engine</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-suite</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Integration tests against a real PostgreSQL (Testcontainers) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
 
@@ -218,6 +276,24 @@
                                 </rule>
                             </rules>
                         </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Integration + BDD tests (*IT.java) run with failsafe after the unit tests.
+              They need Docker (Testcontainers starts PostgreSQL 16).
+              Skip locally with -DskipITs if Docker is not available.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
                     </execution>
                 </executions>
             </plugin>
