@@ -1,4 +1,4 @@
-From eclipse-temurin:21-jdk as builder
+FROM eclipse-temurin:21-jdk AS builder
 
 # Set the working directory
 WORKDIR /app
@@ -28,7 +28,7 @@ COPY --from=builder /app/target/*.jar app.jar
 USER app
 
 # Expose the application port
-EXPOSE 8080
+EXPOSE 8081
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
     CMD ["sh", "-c", "wget -q --spider http://localhost:${PORT:-8081}/health"]
