@@ -26,3 +26,29 @@ Característica: HU11 - Clasificación de Toxicidad y Umbral de Alerta
         | grado |
         | 0     |
         | 5     |
+
+  Regla: El reporte grave de un paciente alerta a su oncólogo tratante
+
+    Esquema del escenario: Un reporte grave notifica al médico asignado
+      Dado que existe el médico "Carlos Garcia" con el paciente asignado "Juan Perez"
+      Cuando "Juan Perez" reporta el síntoma "<síntoma>" con severidad "<severidad>"
+      Entonces la respuesta tiene estado 201
+      Y "Carlos Garcia" recibe una alerta de toxicidad "<severidad>" por el síntoma "<síntoma>"
+
+      Ejemplos:
+        | síntoma             | severidad |
+        | Fiebre neutropénica | CRITICA   |
+        | Mucositis           | SEVERA    |
+
+    Escenario: Un reporte leve no genera alertas
+      Dado que existe el médico "Carlos Garcia" con el paciente asignado "Juan Perez"
+      Cuando "Juan Perez" reporta el síntoma "Náuseas" con severidad "LEVE"
+      Entonces la respuesta tiene estado 201
+      Y "Carlos Garcia" no recibe alertas de toxicidad
+
+    Escenario: La alerta llega solo al médico tratante
+      Dado que existe el médico "Carlos Garcia" con el paciente asignado "Juan Perez"
+      Y que existe el médico "Ana Rojas" sin pacientes asignados
+      Cuando "Juan Perez" reporta el síntoma "Fiebre neutropénica" con severidad "CRITICA"
+      Entonces "Carlos Garcia" recibe una alerta de toxicidad "CRITICA" por el síntoma "Fiebre neutropénica"
+      Y "Ana Rojas" no recibe alertas de toxicidad

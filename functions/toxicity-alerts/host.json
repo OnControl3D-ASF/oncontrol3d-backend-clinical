@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Function.toxicityAlert": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request;Event"
+      }
+    }
+  },
+  "extensions": {
+    "serviceBus": {
+      "maxConcurrentCalls": 4,
+      "autoCompleteMessages": true
+    }
+  }
+}
