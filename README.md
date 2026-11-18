@@ -1,19 +1,20 @@
 # 🏥 OnControl Backend v2.0
 > **Sistema de Gestión Oncológica Integral**
 
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.x-brightgreen)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.x-brightgreen)](https://spring.io/projects/spring-boot)
 [![Java](https://img.shields.io/badge/Java-21-orange)](https://www.oracle.com/java/)
 [![Security](https://img.shields.io/badge/Security-JWT-blue)](https://jwt.io/)
-[![Deployment](https://img.shields.io/badge/Deployed%20on-Render-000000)](https://oncontrol-backend-api.onrender.com)
+[![CI/CD](https://github.com/OnControl3D-ASF/oncontrol3d-backend-clinical/actions/workflows/cicd.yml/badge.svg)](https://github.com/OnControl3D-ASF/oncontrol3d-backend-clinical/actions/workflows/cicd.yml)
+[![Deployment](https://img.shields.io/badge/Deployed%20on-Azure%20AKS-0078D4)](docs/pipeline.md)
 
 OnControl es una plataforma desarrollada en **Java 21** con **Spring Boot**, siguiendo principios de **Domain-Driven Design (DDD)**. Proporciona una API RESTful robusta para conectar Organizaciones Médicas, Doctores y Pacientes en un ecosistema de salud digital.
 
 ---
 
 ## 🚀 Conectividad del Ecosistema
-*   **Backend API:** [https://oncontrol-backend-api.onrender.com](https://oncontrol-backend-api.onrender.com)
+*   **Backend API:** desplegado en Azure Kubernetes Service por el pipeline CI/CD ([docs/pipeline.md](docs/pipeline.md)); la infraestructura se define en el repositorio `oncontrol3d-infra` (Bicep).
 *   **Frontend Web:** [https://oncontrol-front-sem.vercel.app](https://oncontrol-front-sem.vercel.app)
-*   **Documentación Interactiva:** [Swagger UI](https://oncontrol-backend-api.onrender.com/swagger-ui.html)
+*   **Documentación Interactiva:** Swagger UI en `/swagger-ui.html` del servicio desplegado (o `http://localhost:8081/swagger-ui.html` en local).
 
 ---
 

@@ -1,0 +1,191 @@
+# Clinical Service on AKS (namespace "oncontrol", Pod Security "restricted").
+#
+# Template rendered by the CI/CD pipeline with envsubst (explicit variable list). Values come
+# from the IaC deployment outputs (single source of truth) and deploy/env/<env>.env:
+#   NAMESPACE, IMAGE (registry/repo@sha256:digest), APP_VERSION, REPLICAS,
+#   CPU_REQUEST, CPU_LIMIT, MEMORY_REQUEST, MEMORY_LIMIT,
+#   WORKLOAD_IDENTITY_CLIENT_ID, TENANT_ID, KEY_VAULT_NAME,
+#   DB_URL, DB_USERNAME, SERVICEBUS_NAMESPACE
+#
+# Secrets (DB_PASSWORD, JWT_SECRET) never pass through CI: the Secrets Store CSI driver
+# reads them from Key Vault with the pod's workload identity and syncs them into the
+# "clinical-secrets" Kubernetes Secret consumed as environment variables.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clinical
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+  annotations:
+    # Azure workload identity: this service account federates with id-oc3d-<env>-clinical
+    # (Key Vault Secrets User + Service Bus Data Sender), created by Bicep.
+    azure.workload.identity/client-id: "${WORKLOAD_IDENTITY_CLIENT_ID}"
+automountServiceAccountToken: false
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: clinical-keyvault
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+spec:
+  provider: azure
+  parameters:
+    usePodIdentity: "false"
+    clientID: "${WORKLOAD_IDENTITY_CLIENT_ID}"
+    keyvaultName: "${KEY_VAULT_NAME}"
+    tenantId: "${TENANT_ID}"
+    objects: |
+      array:
+        - |
+          objectName: db-password
+          objectType: secret
+        - |
+          objectName: jwt-secret
+          objectType: secret
+  secretObjects:
+    - secretName: clinical-secrets
+      type: Opaque
+      data:
+        - objectName: db-password
+          key: DB_PASSWORD
+        - objectName: jwt-secret
+          key: JWT_SECRET
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clinical
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+    app.kubernetes.io/version: "${APP_VERSION}"
+spec:
+  replicas: ${REPLICAS}
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clinical
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: clinical
+        app.kubernetes.io/part-of: oncontrol3d
+        app.kubernetes.io/version: "${APP_VERSION}"
+        azure.workload.identity/use: "true"
+    spec:
+      serviceAccountName: clinical
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: clinical
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8081
+          env:
+            - name: PORT
+              value: "8081"
+            - name: DB_URL
+              value: "${DB_URL}"
+            - name: DB_USERNAME
+              value: "${DB_USERNAME}"
+            - name: IMAGING_SERVICE_URL
+              value: "http://imaging.${NAMESPACE}.svc.cluster.local:8001"
+            - name: ORTHANC_URL
+              value: "http://orthanc.${NAMESPACE}.svc.cluster.local:8042"
+            - name: SERVICEBUS_NAMESPACE
+              value: "${SERVICEBUS_NAMESPACE}"
+            - name: ALERT_QUEUE_NAME
+              value: "toxicity-alerts"
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+          envFrom:
+            - secretRef:
+                name: clinical-secrets
+          resources:
+            requests:
+              cpu: "${CPU_REQUEST}"
+              memory: "${MEMORY_REQUEST}"
+            limits:
+              cpu: "${CPU_LIMIT}"
+              memory: "${MEMORY_LIMIT}"
+          # Spring Boot on a small node can take > 1 min to start: the startup probe
+          # holds liveness/readiness until the first successful /health.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: keyvault
+              mountPath: /mnt/secrets
+              readOnly: true
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 512Mi
+        # Mounting the CSI volume is what triggers the Key Vault -> Secret sync.
+        - name: keyvault
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: clinical-keyvault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clinical
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: clinical
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
