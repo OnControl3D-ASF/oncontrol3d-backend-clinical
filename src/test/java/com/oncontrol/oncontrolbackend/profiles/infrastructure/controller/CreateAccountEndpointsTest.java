@@ -1,5 +1,6 @@
 package com.oncontrol.oncontrolbackend.profiles.infrastructure.controller;
 
+import com.oncontrol.oncontrolbackend.iam.application.service.OrganizationOnboardingService;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.AuthorizationService;
 import com.oncontrol.oncontrolbackend.profiles.application.service.ProfileService;
 import com.oncontrol.oncontrolbackend.shared.application.port.IdentityUnavailableException;
@@ -40,6 +41,8 @@ class CreateAccountEndpointsTest {
     @Mock
     private AuthorizationService authorizationService;
     @Mock
+    private OrganizationOnboardingService onboardingService;
+    @Mock
     private AppointmentService appointmentService;
     @Mock
     private SymptomService symptomService;
@@ -53,7 +56,7 @@ class CreateAccountEndpointsTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.standaloneSetup(
-                new OrganizationController(profileService, authorizationService),
+                new OrganizationController(profileService, authorizationService, onboardingService),
                 new DoctorController(profileService, appointmentService, symptomService, profileRepository,
                         patientProfileRepository, authorizationService)).build();
     }

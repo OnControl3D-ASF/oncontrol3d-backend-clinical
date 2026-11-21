@@ -23,6 +23,7 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Security wiring: stateless filter chain, no UserDetailsService, 401 for unauthenticated requests. */
@@ -79,5 +80,13 @@ class SecurityConfigTest {
         // No controller maps this path: reaching 404 proves authentication succeeded (not 401/403).
         mockMvc.perform(get("/api/symptoms/anything").header("Authorization", "Bearer good"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void organizationRegistration_isPublicOnlyForPostOnExactPath() throws Exception {
+        // No controller mapped in this slice: 404/405 (not 401) proves security let the request through.
+        mockMvc.perform(post("/api/organizations")).andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/organizations")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/organizations/1/doctors")).andExpect(status().isUnauthorized());
     }
 }

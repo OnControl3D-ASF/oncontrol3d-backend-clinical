@@ -3,6 +3,7 @@ package com.oncontrol.oncontrolbackend.iam.infrastructure.config;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.filter.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -33,6 +34,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/", "/health", "/favicon.ico", "/error").permitAll()
                         .requestMatchers("/api/auth/**").permitAll()
+                        // Public organization onboarding: POST on the exact path only
+                        .requestMatchers(HttpMethod.POST, "/api/organizations").permitAll()
                         .requestMatchers("/swagger-ui/**", "/api-docs/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/medicos/**").hasRole("MEDICO")
                         .requestMatchers("/api/pacientes/**").hasRole("PACIENTE")
