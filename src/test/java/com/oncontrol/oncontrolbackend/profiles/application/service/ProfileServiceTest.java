@@ -16,6 +16,10 @@ import com.oncontrol.oncontrolbackend.profiles.domain.model.ProfileType;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.DoctorProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.PatientProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.ProfileRepository;
+import com.oncontrol.oncontrolbackend.shared.application.port.IdentityConflictException;
+import com.oncontrol.oncontrolbackend.shared.application.port.IdentityUnavailableException;
+import com.oncontrol.oncontrolbackend.shared.application.port.NewAccount;
+import com.oncontrol.oncontrolbackend.shared.application.service.AccountProvisioningService;
 import com.oncontrol.oncontrolbackend.support.Fixtures;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -50,6 +55,8 @@ class ProfileServiceTest {
     private UserRepository userRepository;
     @Mock
     private PasswordEncoder passwordEncoder;
+    @Mock
+    private AccountProvisioningService accountProvisioning;
 
     @InjectMocks
     private ProfileService service;
@@ -72,7 +79,27 @@ class ProfileServiceTest {
     }
 
     private void stubProfileSaves() {
-        when(profileRepository.save(any(Profile.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(profileRepository.save(any(Profile.class))).thenAnswer(inv -> {
+            Profile saved = inv.getArgument(0);
+            saved.setId(5L);
+            return saved;
+        });
+    }
+
+    private void stubDoctorSave() {
+        when(doctorProfileRepository.saveAndFlush(any(DoctorProfile.class))).thenAnswer(inv -> {
+            DoctorProfile saved = inv.getArgument(0);
+            saved.setId(7L);
+            return saved;
+        });
+    }
+
+    private void stubPatientSave() {
+        when(patientProfileRepository.saveAndFlush(any(PatientProfile.class))).thenAnswer(inv -> {
+            PatientProfile saved = inv.getArgument(0);
+            saved.setId(12L);
+            return saved;
+        });
     }
 
     @Test
@@ -82,7 +109,7 @@ class ProfileServiceTest {
         when(doctorProfileRepository.countDoctorsByOrganizationId(Fixtures.ORG_ID)).thenReturn(2L);
         when(passwordEncoder.encode("Secret123!")).thenReturn("hashed");
         stubProfileSaves();
-        when(doctorProfileRepository.save(any(DoctorProfile.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubDoctorSave();
 
         DoctorProfileResponse response = service.createDoctor(Fixtures.ORG_ID, doctorRequest());
 
@@ -107,6 +134,7 @@ class ProfileServiceTest {
         assertThatThrownBy(() -> service.createDoctor(Fixtures.ORG_ID, doctorRequest()))
                 .hasMessage("Organization has reached maximum number of doctors");
         verify(profileRepository, never()).save(any());
+        verifyNoInteractions(accountProvisioning);
     }
 
     @Test
@@ -122,11 +150,53 @@ class ProfileServiceTest {
     }
 
     @Test
+    void createDoctor_provisionsAuthAccountWithNewIds() {
+        when(userRepository.findById(Fixtures.ORG_ID)).thenReturn(Optional.of(Fixtures.organization()));
+        when(doctorProfileRepository.countDoctorsByOrganizationId(Fixtures.ORG_ID)).thenReturn(0L);
+        when(passwordEncoder.encode("Secret123!")).thenReturn("hashed");
+        stubProfileSaves();
+        stubDoctorSave();
+
+        service.createDoctor(Fixtures.ORG_ID, doctorRequest());
+
+        verify(accountProvisioning).provision(new NewAccount("new.doc@hospital.com", "Secret123!", "DOCTOR",
+                Fixtures.ORG_ID, 5L, 7L, null));
+    }
+
+    @Test
+    void createDoctor_authConflict_isReportedAsEmailAlreadyExists() {
+        when(userRepository.findById(Fixtures.ORG_ID)).thenReturn(Optional.of(Fixtures.organization()));
+        when(doctorProfileRepository.countDoctorsByOrganizationId(Fixtures.ORG_ID)).thenReturn(0L);
+        when(passwordEncoder.encode("Secret123!")).thenReturn("hashed");
+        stubProfileSaves();
+        stubDoctorSave();
+        when(accountProvisioning.provision(any(NewAccount.class))).thenThrow(new IdentityConflictException("409"));
+
+        assertThatThrownBy(() -> service.createDoctor(Fixtures.ORG_ID, doctorRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Email already exists");
+    }
+
+    @Test
+    void createDoctor_authUnavailable_propagatesSoTheTransactionRollsBack() {
+        when(userRepository.findById(Fixtures.ORG_ID)).thenReturn(Optional.of(Fixtures.organization()));
+        when(doctorProfileRepository.countDoctorsByOrganizationId(Fixtures.ORG_ID)).thenReturn(0L);
+        when(passwordEncoder.encode("Secret123!")).thenReturn("hashed");
+        stubProfileSaves();
+        stubDoctorSave();
+        when(accountProvisioning.provision(any(NewAccount.class)))
+                .thenThrow(new IdentityUnavailableException("auth down", null));
+
+        assertThatThrownBy(() -> service.createDoctor(Fixtures.ORG_ID, doctorRequest()))
+                .isInstanceOf(IdentityUnavailableException.class);
+    }
+
+    @Test
     void createPatient_linksPatientToDoctorAndOrganization() {
         when(doctorProfileRepository.findById(Fixtures.DOCTOR_ID)).thenReturn(Optional.of(Fixtures.doctor()));
         when(profileRepository.existsByEmail("new.pat@mail.com")).thenReturn(false);
         stubProfileSaves();
-        when(patientProfileRepository.save(any(PatientProfile.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubPatientSave();
 
         PatientProfileResponse response = service.createPatient(Fixtures.DOCTOR_ID, patientRequest());
 
@@ -137,6 +207,33 @@ class ProfileServiceTest {
         assertThat(response.getDoctorProfileId()).isEqualTo(Fixtures.DOCTOR_ID);
         assertThat(response.getDoctorName()).isEqualTo("Carlos Garcia");
         assertThat(response.getCancerStage()).isEqualTo("III");
+    }
+
+    @Test
+    void createPatient_provisionsAuthAccountWithDoctorAndPatientIds() {
+        when(doctorProfileRepository.findById(Fixtures.DOCTOR_ID)).thenReturn(Optional.of(Fixtures.doctor()));
+        stubProfileSaves();
+        stubPatientSave();
+
+        service.createPatient(Fixtures.DOCTOR_ID, patientRequest());
+
+        verify(accountProvisioning).provision(new NewAccount("new.pat@mail.com", "Secret123!", "PATIENT",
+                Fixtures.ORG_ID, 5L, Fixtures.DOCTOR_ID, 12L));
+    }
+
+    @Test
+    void createPatient_authFailures_areMappedLikeForDoctors() {
+        when(doctorProfileRepository.findById(Fixtures.DOCTOR_ID)).thenReturn(Optional.of(Fixtures.doctor()));
+        stubProfileSaves();
+        stubPatientSave();
+        when(accountProvisioning.provision(any(NewAccount.class)))
+                .thenThrow(new IdentityConflictException("409"))
+                .thenThrow(new IdentityUnavailableException("down", null));
+
+        assertThatThrownBy(() -> service.createPatient(Fixtures.DOCTOR_ID, patientRequest()))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Email already exists");
+        assertThatThrownBy(() -> service.createPatient(Fixtures.DOCTOR_ID, patientRequest()))
+                .isInstanceOf(IdentityUnavailableException.class);
     }
 
     @Test

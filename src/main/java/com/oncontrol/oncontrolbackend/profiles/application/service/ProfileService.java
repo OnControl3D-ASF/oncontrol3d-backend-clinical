@@ -2,6 +2,10 @@ package com.oncontrol.oncontrolbackend.profiles.application.service;
 
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.iam.domain.repository.UserRepository;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.PrincipalRole;
+import com.oncontrol.oncontrolbackend.shared.application.port.IdentityConflictException;
+import com.oncontrol.oncontrolbackend.shared.application.port.NewAccount;
+import com.oncontrol.oncontrolbackend.shared.application.service.AccountProvisioningService;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.*;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.*;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.*;
@@ -30,6 +34,7 @@ public class ProfileService {
     private final PatientProfileRepository patientProfileRepository;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AccountProvisioningService accountProvisioning;
 
     /**
      * Organization creates a doctor
@@ -82,7 +87,10 @@ public class ProfileService {
                 .totalReviews(0)
                 .build();
 
-        doctorProfile = doctorProfileRepository.save(doctorProfile);
+        doctorProfile = doctorProfileRepository.saveAndFlush(doctorProfile);
+
+        provisionAccount(new NewAccount(request.getEmail(), request.getPassword(), PrincipalRole.DOCTOR.name(),
+                organizationId, profile.getId(), doctorProfile.getId(), null));
 
         log.info("Doctor created successfully with profile ID: {}", profile.getProfileId());
         return mapToDoctorProfileResponse(doctorProfile);
@@ -138,10 +146,25 @@ public class ProfileService {
                 .lastTreatmentDate(request.getLastTreatmentDate())
                 .build();
 
-        patientProfile = patientProfileRepository.save(patientProfile);
+        patientProfile = patientProfileRepository.saveAndFlush(patientProfile);
+
+        provisionAccount(new NewAccount(request.getEmail(), request.getPassword(), PrincipalRole.PATIENT.name(),
+                doctorProfile.getOrganization().getId(), profile.getId(), doctorProfile.getId(), patientProfile.getId()));
 
         log.info("Patient created successfully with profile ID: {}", profile.getProfileId());
         return mapToPatientProfileResponse(patientProfile);
+    }
+
+    /**
+     * Remote half of the create protocol (runs after the local flush, inside the transaction):
+     * a failure here rolls the local rows back; a later local rollback compensates in auth.
+     */
+    private void provisionAccount(NewAccount account) {
+        try {
+            accountProvisioning.provision(account);
+        } catch (IdentityConflictException e) {
+            throw new IllegalArgumentException("Email already exists", e);
+        }
     }
 
     /**
