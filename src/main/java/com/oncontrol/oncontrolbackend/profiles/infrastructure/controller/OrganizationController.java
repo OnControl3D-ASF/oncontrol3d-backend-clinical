@@ -3,7 +3,11 @@ package com.oncontrol.oncontrolbackend.profiles.infrastructure.controller;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.CreateDoctorRequest;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse;
 import com.oncontrol.oncontrolbackend.profiles.application.service.ProfileService;
+import com.oncontrol.oncontrolbackend.iam.application.dto.RegisterRequest;
+import com.oncontrol.oncontrolbackend.iam.application.service.OrganizationOnboardingService;
+import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.AuthorizationService;
+import com.oncontrol.oncontrolbackend.shared.application.port.IdentityUnavailableException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -27,6 +31,32 @@ public class OrganizationController {
 
     private final ProfileService profileService;
     private final AuthorizationService authorizationService;
+    private final OrganizationOnboardingService onboardingService;
+
+    @PostMapping
+    @Operation(summary = "Register organization", description = "Public onboarding: creates the organization and its credentials in the auth service")
+    public ResponseEntity<?> registerOrganization(@Valid @RequestBody RegisterRequest request) {
+        try {
+            User organization = onboardingService.register(request);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("type", "ORGANIZATION");
+            response.put("id", organization.getId());
+            response.put("email", organization.getEmail());
+            response.put("organizationName", organization.getOrganizationName());
+            response.put("country", organization.getCountry());
+            response.put("city", organization.getCity());
+            response.put("role", organization.getRole());
+            response.put("message", "Organization registered successfully");
+
+            return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (IdentityUnavailableException e) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .body(Map.of("message", "Identity service unavailable, try again later"));
+        }
+    }
 
     @PostMapping("/{organizationId}/doctors")
     @Operation(summary = "Create doctor", description = "Organization creates a new doctor")
@@ -46,6 +76,10 @@ public class OrganizationController {
             Map<String, String> errorResponse = new HashMap<>();
             errorResponse.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(errorResponse);
+        } catch (IdentityUnavailableException e) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("message", "Identity service unavailable, try again later");
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(errorResponse);
         } catch (Exception e) {
             Map<String, String> errorResponse = new HashMap<>();
             errorResponse.put("message", "Error creating doctor: " + e.getMessage());

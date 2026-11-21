@@ -1,10 +1,10 @@
 package com.oncontrol.oncontrolbackend.iam.infrastructure.service;
 
-import com.oncontrol.oncontrolbackend.iam.domain.model.User;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.AuthenticatedPrincipal;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.PrincipalRole;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.DoctorProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.PatientProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.Profile;
-import com.oncontrol.oncontrolbackend.profiles.domain.model.ProfileType;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.DoctorProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.PatientProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.ProfileRepository;
@@ -14,14 +14,16 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
+
 /**
- * Centralizes resource-ownership (IDOR) checks.
+ * Centralizes resource-ownership (IDOR) checks on the JWT claims of the caller.
  *
- * The authenticated principal is either a {@link User} (organization, id = User.id)
- * or a {@link Profile} (doctor/patient, id = Profile.id). The IDs used in URLs are a
- * DIFFERENT id space: doctorProfileId = DoctorProfile.id, patientProfileId = PatientProfile.id,
- * organizationId = User.id. These guards resolve the principal to its DoctorProfile/PatientProfile
- * before comparing, and allow access up the ownership chain (org -> doctor -> patient).
+ * The principal is an {@link AuthenticatedPrincipal} (claims only, no entity). The ids used in
+ * URLs are a different id space from Profile PKs: doctorProfileId = DoctorProfile.id,
+ * patientProfileId = PatientProfile.id, organizationId = organization (users) PK.
+ * Target entities are still loaded (they are clinical data) and access is allowed up the
+ * ownership chain (org -> doctor -> patient).
  */
 @Service
 @RequiredArgsConstructor
@@ -31,20 +33,23 @@ public class AuthorizationService {
     private final PatientProfileRepository patientProfileRepository;
     private final ProfileRepository profileRepository;
 
-    private Object currentPrincipal() {
+    private AuthenticatedPrincipal currentPrincipal() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !auth.isAuthenticated() || auth.getPrincipal() == null) {
             throw new AccessDeniedException("Not authenticated");
         }
-        return auth.getPrincipal();
+        if (auth.getPrincipal() instanceof AuthenticatedPrincipal principal) {
+            return principal;
+        }
+        throw new AccessDeniedException("Not authenticated");
     }
 
     /**
      * Allows only the organization itself.
      */
     public void requireOrganization(Long organizationId) {
-        Object principal = currentPrincipal();
-        if (principal instanceof User user && user.getId().equals(organizationId)) {
+        AuthenticatedPrincipal principal = currentPrincipal();
+        if (principal.role() == PrincipalRole.ORGANIZATION && Objects.equals(principal.organizationId(), organizationId)) {
             return;
         }
         throw new AccessDeniedException("You are not allowed to access this organization's data");
@@ -54,19 +59,16 @@ public class AuthorizationService {
      * Allows the doctor themselves, or the organization that owns the doctor.
      */
     public void requireDoctor(Long doctorProfileId) {
-        Object principal = currentPrincipal();
+        AuthenticatedPrincipal principal = currentPrincipal();
         DoctorProfile target = doctorProfileRepository.findById(doctorProfileId)
                 .orElseThrow(() -> new AccessDeniedException("Doctor not found"));
 
-        if (principal instanceof Profile profile && profile.getProfileType() == ProfileType.DOCTOR) {
-            DoctorProfile own = doctorProfileRepository.findByProfileId(profile.getId()).orElse(null);
-            if (own != null && own.getId().equals(target.getId())) {
-                return;
-            }
-        } else if (principal instanceof User user) {
-            if (target.getOrganization() != null && target.getOrganization().getId().equals(user.getId())) {
-                return;
-            }
+        if (principal.role() == PrincipalRole.DOCTOR
+                && Objects.equals(principal.doctorProfileId(), target.getId())) {
+            return;
+        }
+        if (principal.role() == PrincipalRole.ORGANIZATION && ownsDoctor(principal, target)) {
+            return;
         }
         throw new AccessDeniedException("You are not allowed to access this doctor's data");
     }
@@ -75,28 +77,26 @@ public class AuthorizationService {
      * Allows the patient themselves, the patient's doctor, or the owning organization.
      */
     public void requirePatientAccess(Long patientProfileId) {
-        Object principal = currentPrincipal();
+        AuthenticatedPrincipal principal = currentPrincipal();
         PatientProfile target = patientProfileRepository.findById(patientProfileId)
                 .orElseThrow(() -> new AccessDeniedException("Patient not found"));
+        DoctorProfile doctor = target.getDoctorProfile();
 
-        if (principal instanceof Profile profile) {
-            if (profile.getProfileType() == ProfileType.PATIENT) {
-                PatientProfile own = patientProfileRepository.findByProfileId(profile.getId()).orElse(null);
-                if (own != null && own.getId().equals(target.getId())) {
-                    return;
-                }
-            } else if (profile.getProfileType() == ProfileType.DOCTOR) {
-                DoctorProfile own = doctorProfileRepository.findByProfileId(profile.getId()).orElse(null);
-                if (own != null && target.getDoctorProfile() != null
-                        && target.getDoctorProfile().getId().equals(own.getId())) {
+        switch (principal.role()) {
+            case PATIENT -> {
+                if (Objects.equals(principal.patientProfileId(), target.getId())) {
                     return;
                 }
             }
-        } else if (principal instanceof User user) {
-            if (target.getDoctorProfile() != null
-                    && target.getDoctorProfile().getOrganization() != null
-                    && target.getDoctorProfile().getOrganization().getId().equals(user.getId())) {
-                return;
+            case DOCTOR -> {
+                if (doctor != null && Objects.equals(principal.doctorProfileId(), doctor.getId())) {
+                    return;
+                }
+            }
+            case ORGANIZATION -> {
+                if (doctor != null && ownsDoctor(principal, doctor)) {
+                    return;
+                }
             }
         }
         throw new AccessDeniedException("You are not allowed to access this patient's data");
@@ -104,29 +104,30 @@ public class AuthorizationService {
 
     /**
      * Resource-level ownership check by the underlying Profile ids that own a resource
-     * (e.g. an appointment's doctor/patient Profiles). Allows the owning profile itself,
-     * or the organization that owns any of those profiles.
+     * (e.g. an appointment's doctor/patient Profiles). Allows the owning profile itself
+     * (claim profileId == Profile PK), or the organization that owns any of those profiles.
      */
     public void requireProfileOwnership(Long... ownerProfileIds) {
-        Object principal = currentPrincipal();
-        if (principal instanceof Profile profile) {
-            for (Long id : ownerProfileIds) {
-                if (id != null && id.equals(profile.getId())) {
-                    return;
-                }
+        AuthenticatedPrincipal principal = currentPrincipal();
+        for (Long id : ownerProfileIds) {
+            if (id == null) {
+                continue;
             }
-        } else if (principal instanceof User user) {
-            for (Long id : ownerProfileIds) {
-                if (id == null) {
-                    continue;
-                }
+            if (principal.role() == PrincipalRole.ORGANIZATION) {
                 Profile owner = profileRepository.findById(id).orElse(null);
                 if (owner != null && owner.getUser() != null
-                        && owner.getUser().getId().equals(user.getId())) {
+                        && Objects.equals(owner.getUser().getId(), principal.organizationId())) {
                     return;
                 }
+            } else if (id.equals(principal.profileId())) {
+                return;
             }
         }
         throw new AccessDeniedException("You are not allowed to access this resource");
+    }
+
+    private static boolean ownsDoctor(AuthenticatedPrincipal org, DoctorProfile doctor) {
+        return doctor.getOrganization() != null
+                && Objects.equals(doctor.getOrganization().getId(), org.organizationId());
     }
 }

@@ -7,6 +7,9 @@ import com.oncontrol.oncontrolbackend.appointments.domain.repository.Appointment
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.iam.domain.model.UserRole;
 import com.oncontrol.oncontrolbackend.iam.domain.repository.UserRepository;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.PrincipalRole;
+import com.oncontrol.oncontrolbackend.shared.application.port.NewAccount;
+import com.oncontrol.oncontrolbackend.shared.application.service.AccountProvisioningService;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.*;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.DoctorProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.PatientProfileRepository;
@@ -31,6 +34,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -62,6 +66,8 @@ public class DataSeeder implements CommandLineRunner {
     private final MedicalHistoryRepository medicalHistoryRepository;
     private final AllergyRepository allergyRepository;
     private final PasswordEncoder passwordEncoder;
+    private final AccountProvisioningService accountProvisioning;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${app.data.seeding.password:}")
     private String seedPassword;
@@ -81,95 +87,107 @@ public class DataSeeder implements CommandLineRunner {
         log.info("🌱 Starting DataSeeder...");
 
         try {
-            // 1. Crear Organización
-            User organization = createOrganization();
-            
-            // 2. Crear Doctores
-            DoctorProfile doctor1 = createDoctor(organization, "Carlos", "García", "dr.garcia@hospital.com", "Oncología Médica", "MED-12345");
-            DoctorProfile doctor2 = createDoctor(organization, "María", "Rodríguez", "dr.rodriguez@hospital.com", "Oncología Quirúrgica", "MED-67890");
-            
-            // 3. Crear Pacientes para Doctor 1
-            PatientProfile patient1 = createPatient(doctor1, "Juan", "Pérez", "juan.perez@email.com", "O+", "Pulmón", "II");
-            PatientProfile patient2 = createPatient(doctor1, "Ana", "Martínez", "ana.martinez@email.com", "A+", "Mama", "I");
-            
-            // 4. Crear Pacientes para Doctor 2
-            PatientProfile patient3 = createPatient(doctor2, "Pedro", "López", "pedro.lopez@email.com", "B+", "Colon", "III");
-            PatientProfile patient4 = createPatient(doctor2, "Laura", "Sánchez", "laura.sanchez@email.com", "AB+", "Próstata", "II");
-            
-            // 5. Crear Citas
-            createAppointment(doctor1.getProfile(), patient1.getProfile(), LocalDateTime.now().plusDays(2), AppointmentType.PRIMERA_CONSULTA);
-            createAppointment(doctor1.getProfile(), patient1.getProfile(), LocalDateTime.now().plusDays(7), AppointmentType.CONSULTA_SEGUIMIENTO);
-            createAppointment(doctor1.getProfile(), patient2.getProfile(), LocalDateTime.now().plusDays(3), AppointmentType.REVISION_EXAMENES);
-            createAppointment(doctor2.getProfile(), patient3.getProfile(), LocalDateTime.now().plusDays(1), AppointmentType.PRIMERA_CONSULTA);
-            createAppointment(doctor2.getProfile(), patient4.getProfile(), LocalDateTime.now().plusDays(5), AppointmentType.CONSULTA_SEGUIMIENTO);
-            
-            // 6. Crear Síntomas
-            createSymptom(patient1.getProfile(), "Dolor de cabeza", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
-            createSymptom(patient1.getProfile(), "Náusea", SymptomSeverity.SEVERA, LocalDate.now().minusDays(2));
-            createSymptom(patient1.getProfile(), "Fatiga", SymptomSeverity.LEVE, LocalDate.now());
-            
-            createSymptom(patient2.getProfile(), "Dolor en el pecho", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
-            
-            createSymptom(patient3.getProfile(), "Dolor abdominal", SymptomSeverity.SEVERA, LocalDate.now().minusDays(3));
-            createSymptom(patient3.getProfile(), "Pérdida de apetito", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
-            
-            createSymptom(patient4.getProfile(), "Dolor de espalda", SymptomSeverity.LEVE, LocalDate.now().minusDays(2));
-            
-            // 7. Crear Tratamientos
-            Treatment treatment1 = createTreatment(doctor1, patient1, TreatmentType.CHEMOTHERAPY, "FOLFOX", 6, LocalDate.now().minusDays(30));
-            Treatment treatment2 = createTreatment(doctor1, patient2, TreatmentType.RADIOTHERAPY, "Radioterapia Externa", 25, LocalDate.now().minusDays(20));
-            createTreatment(doctor2, patient3, TreatmentType.SURGERY, "Resección Quirúrgica", 1, LocalDate.now().minusDays(60));
-            createTreatment(doctor2, patient4, TreatmentType.HORMONE_THERAPY, "Terapia Anti-Andrógenos", 12, LocalDate.now().minusDays(15));
-            
-            // 8. Crear Sesiones de Tratamiento
-            createTreatmentSession(treatment1, 1, LocalDateTime.now().minusDays(25));
-            createTreatmentSession(treatment1, 2, LocalDateTime.now().minusDays(18));
-            createTreatmentSession(treatment2, 1, LocalDateTime.now().minusDays(15));
-            
-            // 9. Crear Medicamentos
-            createMedication(doctor1, patient1, "Oxaliplatino", "85 mg/m²", "Cada 2 semanas", LocalDate.now().minusDays(30));
-            createMedication(doctor1, patient1, "5-Fluorouracilo", "400 mg/m²", "Cada 2 semanas", LocalDate.now().minusDays(30));
-            createMedication(doctor1, patient2, "Ondansetrón", "8 mg", "Cada 8 horas", LocalDate.now().minusDays(20));
-            createMedication(doctor2, patient3, "Paracetamol", "500 mg", "Cada 6 horas si hay dolor", LocalDate.now().minusDays(60));
-            createMedication(doctor2, patient4, "Bicalutamida", "50 mg", "Diaria", LocalDate.now().minusDays(15));
-            
-            // 10. Crear Historial Médico
-            createHistoryEntry(doctor1, patient1, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Pulmón", "Adenocarcinoma pulmonar etapa II", SeverityLevel.HIGH, LocalDate.now().minusDays(90));
-            createHistoryEntry(doctor1, patient2, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Mama", "Carcinoma ductal infiltrante etapa I", SeverityLevel.MEDIUM, LocalDate.now().minusDays(60));
-            createHistoryEntry(doctor2, patient3, HistoryEntryType.SURGERY, "Cirugía de Resección Colónica", "Colectomía parcial exitosa", SeverityLevel.HIGH, LocalDate.now().minusDays(60));
-            createHistoryEntry(doctor2, patient4, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Próstata", "Adenocarcinoma prostático etapa II", SeverityLevel.MEDIUM, LocalDate.now().minusDays(45));
-            createHistoryEntry(doctor1, patient1, HistoryEntryType.TEST_RESULT, "Resultados de TAC", "TAC de tórax muestra reducción tumoral del 30%", SeverityLevel.LOW, LocalDate.now().minusDays(10));
-            
-            // 11. Crear Alergias
-            createAllergy(patient1, "Penicilina", AllergyType.MEDICATION, SeverityLevel.HIGH, "Erupción cutánea severa", LocalDate.of(2010, 5, 15));
-            createAllergy(patient2, "Látex", AllergyType.CHEMICAL, SeverityLevel.MEDIUM, "Dermatitis de contacto", LocalDate.of(2015, 3, 20));
-            createAllergy(patient3, "Mariscos", AllergyType.FOOD, SeverityLevel.MEDIUM, "Urticaria", LocalDate.of(2012, 8, 10));
-
-            log.info("✅ DataSeeder completed successfully!");
-            log.info("📊 Created:");
-            log.info("   - 1 Organization");
-            log.info("   - 2 Doctors");
-            log.info("   - 4 Patients");
-            log.info("   - 5 Appointments");
-            log.info("   - 7 Symptoms");
-            log.info("   - 4 Treatments");
-            log.info("   - 3 Treatment Sessions");
-            log.info("   - 5 Medications");
-            log.info("   - 5 Medical History Entries");
-            log.info("   - 3 Allergies");
-            log.info("");
-            log.info("🔐 Login accounts (password: SEED_USER_PASSWORD):");
-            log.info("   Organization: admin@hospital.com");
-            log.info("   Doctor 1: dr.garcia@hospital.com");
-            log.info("   Doctor 2: dr.rodriguez@hospital.com");
-            log.info("   Patient 1: juan.perez@email.com");
-            log.info("   Patient 2: ana.martinez@email.com");
-            log.info("   Patient 3: pedro.lopez@email.com");
-            log.info("   Patient 4: laura.sanchez@email.com");
-            
+            // One transaction for the whole seed: if any account cannot be provisioned in the
+            // auth service, every clinical row rolls back and the next start retries.
+            transactionTemplate.executeWithoutResult(status -> seed());
         } catch (Exception e) {
-            log.error("❌ Error in DataSeeder: {}", e.getMessage(), e);
+            log.error("❌ Error in DataSeeder (rolled back, will retry on next start): {}", e.getMessage(), e);
         }
+    }
+
+    private void seed() {
+        // 1. Crear Organización
+        User organization = createOrganization();
+        
+        // 2. Crear Doctores
+        DoctorProfile doctor1 = createDoctor(organization, "Carlos", "García", "dr.garcia@hospital.com", "Oncología Médica", "MED-12345");
+        DoctorProfile doctor2 = createDoctor(organization, "María", "Rodríguez", "dr.rodriguez@hospital.com", "Oncología Quirúrgica", "MED-67890");
+        
+        // 3. Crear Pacientes para Doctor 1
+        PatientProfile patient1 = createPatient(doctor1, "Juan", "Pérez", "juan.perez@email.com", "O+", "Pulmón", "II");
+        PatientProfile patient2 = createPatient(doctor1, "Ana", "Martínez", "ana.martinez@email.com", "A+", "Mama", "I");
+        
+        // 4. Crear Pacientes para Doctor 2
+        PatientProfile patient3 = createPatient(doctor2, "Pedro", "López", "pedro.lopez@email.com", "B+", "Colon", "III");
+        PatientProfile patient4 = createPatient(doctor2, "Laura", "Sánchez", "laura.sanchez@email.com", "AB+", "Próstata", "II");
+        
+        // 5. Crear Citas
+        createAppointment(doctor1.getProfile(), patient1.getProfile(), LocalDateTime.now().plusDays(2), AppointmentType.PRIMERA_CONSULTA);
+        createAppointment(doctor1.getProfile(), patient1.getProfile(), LocalDateTime.now().plusDays(7), AppointmentType.CONSULTA_SEGUIMIENTO);
+        createAppointment(doctor1.getProfile(), patient2.getProfile(), LocalDateTime.now().plusDays(3), AppointmentType.REVISION_EXAMENES);
+        createAppointment(doctor2.getProfile(), patient3.getProfile(), LocalDateTime.now().plusDays(1), AppointmentType.PRIMERA_CONSULTA);
+        createAppointment(doctor2.getProfile(), patient4.getProfile(), LocalDateTime.now().plusDays(5), AppointmentType.CONSULTA_SEGUIMIENTO);
+        
+        // 6. Crear Síntomas
+        createSymptom(patient1.getProfile(), "Dolor de cabeza", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
+        createSymptom(patient1.getProfile(), "Náusea", SymptomSeverity.SEVERA, LocalDate.now().minusDays(2));
+        createSymptom(patient1.getProfile(), "Fatiga", SymptomSeverity.LEVE, LocalDate.now());
+        
+        createSymptom(patient2.getProfile(), "Dolor en el pecho", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
+        
+        createSymptom(patient3.getProfile(), "Dolor abdominal", SymptomSeverity.SEVERA, LocalDate.now().minusDays(3));
+        createSymptom(patient3.getProfile(), "Pérdida de apetito", SymptomSeverity.MODERADA, LocalDate.now().minusDays(1));
+        
+        createSymptom(patient4.getProfile(), "Dolor de espalda", SymptomSeverity.LEVE, LocalDate.now().minusDays(2));
+        
+        // 7. Crear Tratamientos
+        Treatment treatment1 = createTreatment(doctor1, patient1, TreatmentType.CHEMOTHERAPY, "FOLFOX", 6, LocalDate.now().minusDays(30));
+        Treatment treatment2 = createTreatment(doctor1, patient2, TreatmentType.RADIOTHERAPY, "Radioterapia Externa", 25, LocalDate.now().minusDays(20));
+        createTreatment(doctor2, patient3, TreatmentType.SURGERY, "Resección Quirúrgica", 1, LocalDate.now().minusDays(60));
+        createTreatment(doctor2, patient4, TreatmentType.HORMONE_THERAPY, "Terapia Anti-Andrógenos", 12, LocalDate.now().minusDays(15));
+        
+        // 8. Crear Sesiones de Tratamiento
+        createTreatmentSession(treatment1, 1, LocalDateTime.now().minusDays(25));
+        createTreatmentSession(treatment1, 2, LocalDateTime.now().minusDays(18));
+        createTreatmentSession(treatment2, 1, LocalDateTime.now().minusDays(15));
+        
+        // 9. Crear Medicamentos
+        createMedication(doctor1, patient1, "Oxaliplatino", "85 mg/m²", "Cada 2 semanas", LocalDate.now().minusDays(30));
+        createMedication(doctor1, patient1, "5-Fluorouracilo", "400 mg/m²", "Cada 2 semanas", LocalDate.now().minusDays(30));
+        createMedication(doctor1, patient2, "Ondansetrón", "8 mg", "Cada 8 horas", LocalDate.now().minusDays(20));
+        createMedication(doctor2, patient3, "Paracetamol", "500 mg", "Cada 6 horas si hay dolor", LocalDate.now().minusDays(60));
+        createMedication(doctor2, patient4, "Bicalutamida", "50 mg", "Diaria", LocalDate.now().minusDays(15));
+        
+        // 10. Crear Historial Médico
+        createHistoryEntry(doctor1, patient1, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Pulmón", "Adenocarcinoma pulmonar etapa II", SeverityLevel.HIGH, LocalDate.now().minusDays(90));
+        createHistoryEntry(doctor1, patient2, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Mama", "Carcinoma ductal infiltrante etapa I", SeverityLevel.MEDIUM, LocalDate.now().minusDays(60));
+        createHistoryEntry(doctor2, patient3, HistoryEntryType.SURGERY, "Cirugía de Resección Colónica", "Colectomía parcial exitosa", SeverityLevel.HIGH, LocalDate.now().minusDays(60));
+        createHistoryEntry(doctor2, patient4, HistoryEntryType.DIAGNOSIS, "Diagnóstico de Cáncer de Próstata", "Adenocarcinoma prostático etapa II", SeverityLevel.MEDIUM, LocalDate.now().minusDays(45));
+        createHistoryEntry(doctor1, patient1, HistoryEntryType.TEST_RESULT, "Resultados de TAC", "TAC de tórax muestra reducción tumoral del 30%", SeverityLevel.LOW, LocalDate.now().minusDays(10));
+        
+        // 11. Crear Alergias
+        createAllergy(patient1, "Penicilina", AllergyType.MEDICATION, SeverityLevel.HIGH, "Erupción cutánea severa", LocalDate.of(2010, 5, 15));
+        createAllergy(patient2, "Látex", AllergyType.CHEMICAL, SeverityLevel.MEDIUM, "Dermatitis de contacto", LocalDate.of(2015, 3, 20));
+        createAllergy(patient3, "Mariscos", AllergyType.FOOD, SeverityLevel.MEDIUM, "Urticaria", LocalDate.of(2012, 8, 10));
+
+        log.info("✅ DataSeeder completed successfully!");
+        log.info("📊 Created:");
+        log.info("   - 1 Organization");
+        log.info("   - 2 Doctors");
+        log.info("   - 4 Patients");
+        log.info("   - 5 Appointments");
+        log.info("   - 7 Symptoms");
+        log.info("   - 4 Treatments");
+        log.info("   - 3 Treatment Sessions");
+        log.info("   - 5 Medications");
+        log.info("   - 5 Medical History Entries");
+        log.info("   - 3 Allergies");
+        log.info("");
+        log.info("🔐 Login accounts (password: SEED_USER_PASSWORD):");
+        log.info("   Organization: admin@hospital.com");
+        log.info("   Doctor 1: dr.garcia@hospital.com");
+        log.info("   Doctor 2: dr.rodriguez@hospital.com");
+        log.info("   Patient 1: juan.perez@email.com");
+        log.info("   Patient 2: ana.martinez@email.com");
+        log.info("   Patient 3: pedro.lopez@email.com");
+        log.info("   Patient 4: laura.sanchez@email.com");
+    }
+
+    /** Seed accounts go through the same provisioning protocol as runtime creates (no separate auth seeder). */
+    private void provision(String email, PrincipalRole role, Long organizationId, Long profileId,
+                           Long doctorProfileId, Long patientProfileId) {
+        accountProvisioning.provision(new NewAccount(email, seedPassword, role.name(), organizationId,
+                profileId, doctorProfileId, patientProfileId));
     }
 
     private User createOrganization() {
@@ -193,6 +211,7 @@ public class DataSeeder implements CommandLineRunner {
                 .build();
         
         organization = userRepository.save(organization);
+        provision("admin@hospital.com", PrincipalRole.ORGANIZATION, organization.getId(), null, null, null);
         log.info("✓ Created organization: {}", organization.getOrganizationName());
         return organization;
     }
@@ -231,7 +250,8 @@ public class DataSeeder implements CommandLineRunner {
                 .totalReviews((int)(Math.random() * 50 + 10))
                 .build();
         
-        doctorProfile = doctorProfileRepository.save(doctorProfile);
+        doctorProfile = doctorProfileRepository.saveAndFlush(doctorProfile);
+        provision(email, PrincipalRole.DOCTOR, organization.getId(), profile.getId(), doctorProfile.getId(), null);
         log.info("✓ Created doctor: Dr. {} {}", firstName, lastName);
         return doctorProfile;
     }
@@ -275,7 +295,9 @@ public class DataSeeder implements CommandLineRunner {
                 .lastTreatmentDate(LocalDate.now().minusDays((long)(Math.random() * 30 + 1)))
                 .build();
         
-        patientProfile = patientProfileRepository.save(patientProfile);
+        patientProfile = patientProfileRepository.saveAndFlush(patientProfile);
+        provision(email, PrincipalRole.PATIENT, doctorProfile.getOrganization().getId(), profile.getId(),
+                doctorProfile.getId(), patientProfile.getId());
         log.info("✓ Created patient: {} {} (Cancer: {})", firstName, lastName, cancerType);
         return patientProfile;
     }

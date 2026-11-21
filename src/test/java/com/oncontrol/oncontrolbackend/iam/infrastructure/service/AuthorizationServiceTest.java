@@ -1,6 +1,8 @@
 package com.oncontrol.oncontrolbackend.iam.infrastructure.service;
 
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.AuthenticatedPrincipal;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.PrincipalRole;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.DoctorProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.PatientProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.Profile;
@@ -27,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
 
 /**
- * Ownership (IDOR) rules: org -> doctor -> patient.
- * Fixture: organization 100 owns doctor 10 (profile 1), who owns patient 20 (profile 2).
+ * Ownership (IDOR) rules evaluated on token claims: org -> doctor -> patient.
+ * Fixture: organization 100 owns doctor 10 (Profile PK 1), who owns patient 20 (Profile PK 2).
  */
 @ExtendWith(MockitoExtension.class)
 class AuthorizationServiceTest {
@@ -43,30 +45,31 @@ class AuthorizationServiceTest {
     @InjectMocks
     private AuthorizationService authorizationService;
 
-    private User organization;
-    private User otherOrganization;
+    private AuthenticatedPrincipal organization;
+    private AuthenticatedPrincipal otherOrganization;
+    private AuthenticatedPrincipal doctorPrincipal;
+    private AuthenticatedPrincipal patientPrincipal;
+    private AuthenticatedPrincipal strangerDoctor;
+    private AuthenticatedPrincipal strangerPatient;
     private Profile doctorAccount;
-    private Profile patientAccount;
-    private Profile strangerDoctorAccount;
-    private DoctorProfile doctor;
-    private PatientProfile patient;
 
     @BeforeEach
     void setUp() {
-        organization = User.builder().id(100L).email("org@h.com").build();
-        otherOrganization = User.builder().id(200L).email("other@h.com").build();
-        doctorAccount = Profile.builder().id(1L).profileType(ProfileType.DOCTOR).user(organization).build();
-        patientAccount = Profile.builder().id(2L).profileType(ProfileType.PATIENT).user(organization).build();
-        strangerDoctorAccount = Profile.builder().id(3L).profileType(ProfileType.DOCTOR).build();
-        doctor = DoctorProfile.builder().id(10L).profile(doctorAccount).organization(organization).build();
-        patient = PatientProfile.builder().id(20L).profile(patientAccount).doctorProfile(doctor).build();
+        User org = User.builder().id(100L).email("org@h.com").build();
+        doctorAccount = Profile.builder().id(1L).profileType(ProfileType.DOCTOR).user(org).build();
+        Profile patientAccount = Profile.builder().id(2L).profileType(ProfileType.PATIENT).user(org).build();
+        DoctorProfile doctor = DoctorProfile.builder().id(10L).profile(doctorAccount).organization(org).build();
+        PatientProfile patient = PatientProfile.builder().id(20L).profile(patientAccount).doctorProfile(doctor).build();
+
+        organization = new AuthenticatedPrincipal(PrincipalRole.ORGANIZATION, "org@h.com", 100L, null, null, null);
+        otherOrganization = new AuthenticatedPrincipal(PrincipalRole.ORGANIZATION, "other@h.com", 200L, null, null, null);
+        doctorPrincipal = new AuthenticatedPrincipal(PrincipalRole.DOCTOR, "doc@h.com", 100L, 1L, 10L, null);
+        patientPrincipal = new AuthenticatedPrincipal(PrincipalRole.PATIENT, "pat@h.com", 100L, 2L, 10L, 20L);
+        strangerDoctor = new AuthenticatedPrincipal(PrincipalRole.DOCTOR, "x@h.com", 200L, 3L, 30L, null);
+        strangerPatient = new AuthenticatedPrincipal(PrincipalRole.PATIENT, "y@h.com", 100L, 4L, 10L, 21L);
 
         lenient().when(doctorProfileRepository.findById(10L)).thenReturn(Optional.of(doctor));
-        lenient().when(doctorProfileRepository.findByProfileId(1L)).thenReturn(Optional.of(doctor));
-        lenient().when(doctorProfileRepository.findByProfileId(3L))
-                .thenReturn(Optional.of(DoctorProfile.builder().id(30L).build()));
         lenient().when(patientProfileRepository.findById(20L)).thenReturn(Optional.of(patient));
-        lenient().when(patientProfileRepository.findByProfileId(2L)).thenReturn(Optional.of(patient));
         lenient().when(profileRepository.findById(1L)).thenReturn(Optional.of(doctorAccount));
     }
 
@@ -88,6 +91,13 @@ class AuthorizationServiceTest {
     }
 
     @Test
+    void nonClaimsPrincipal_isDenied() {
+        authenticateAs("anonymousUser");
+        assertThatThrownBy(() -> authorizationService.requireOrganization(100L))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
     void requireOrganization_allowsOnlyItself() {
         authenticateAs(organization);
         assertThatCode(() -> authorizationService.requireOrganization(100L)).doesNotThrowAnyException();
@@ -95,11 +105,15 @@ class AuthorizationServiceTest {
         authenticateAs(otherOrganization);
         assertThatThrownBy(() -> authorizationService.requireOrganization(100L))
                 .isInstanceOf(AccessDeniedException.class);
+
+        authenticateAs(doctorPrincipal);
+        assertThatThrownBy(() -> authorizationService.requireOrganization(100L))
+                .isInstanceOf(AccessDeniedException.class);
     }
 
     @Test
     void requireDoctor_allowsDoctorItselfAndOwningOrganization() {
-        authenticateAs(doctorAccount);
+        authenticateAs(doctorPrincipal);
         assertThatCode(() -> authorizationService.requireDoctor(10L)).doesNotThrowAnyException();
 
         authenticateAs(organization);
@@ -107,14 +121,14 @@ class AuthorizationServiceTest {
     }
 
     @Test
-    void requireDoctor_deniesOtherDoctorsAndOrganizations() {
-        authenticateAs(strangerDoctorAccount);
+    void requireDoctor_deniesOtherDoctorsOrganizationsAndPatients() {
+        authenticateAs(strangerDoctor);
         assertThatThrownBy(() -> authorizationService.requireDoctor(10L)).isInstanceOf(AccessDeniedException.class);
 
         authenticateAs(otherOrganization);
         assertThatThrownBy(() -> authorizationService.requireDoctor(10L)).isInstanceOf(AccessDeniedException.class);
 
-        authenticateAs(patientAccount);
+        authenticateAs(patientPrincipal);
         assertThatThrownBy(() -> authorizationService.requireDoctor(10L)).isInstanceOf(AccessDeniedException.class);
     }
 
@@ -128,10 +142,10 @@ class AuthorizationServiceTest {
 
     @Test
     void requirePatientAccess_allowsPatientTheirDoctorAndOrganization() {
-        authenticateAs(patientAccount);
+        authenticateAs(patientPrincipal);
         assertThatCode(() -> authorizationService.requirePatientAccess(20L)).doesNotThrowAnyException();
 
-        authenticateAs(doctorAccount);
+        authenticateAs(doctorPrincipal);
         assertThatCode(() -> authorizationService.requirePatientAccess(20L)).doesNotThrowAnyException();
 
         authenticateAs(organization);
@@ -140,10 +154,13 @@ class AuthorizationServiceTest {
 
     @Test
     void requirePatientAccess_deniesStrangers() {
-        authenticateAs(strangerDoctorAccount);
+        authenticateAs(strangerDoctor);
         assertThatThrownBy(() -> authorizationService.requirePatientAccess(20L)).isInstanceOf(AccessDeniedException.class);
 
         authenticateAs(otherOrganization);
+        assertThatThrownBy(() -> authorizationService.requirePatientAccess(20L)).isInstanceOf(AccessDeniedException.class);
+
+        authenticateAs(strangerPatient);
         assertThatThrownBy(() -> authorizationService.requirePatientAccess(20L)).isInstanceOf(AccessDeniedException.class);
     }
 
@@ -156,7 +173,7 @@ class AuthorizationServiceTest {
 
     @Test
     void requireProfileOwnership_allowsOwnerProfileAndOwningOrganization() {
-        authenticateAs(doctorAccount);
+        authenticateAs(doctorPrincipal);
         assertThatCode(() -> authorizationService.requireProfileOwnership(null, 1L)).doesNotThrowAnyException();
 
         authenticateAs(organization);
@@ -164,8 +181,15 @@ class AuthorizationServiceTest {
     }
 
     @Test
+    void requireProfileOwnership_comparesClaimProfileIdWithProfilePk() {
+        authenticateAs(doctorPrincipal);   // claim profileId = 1
+        assertThatThrownBy(() -> authorizationService.requireProfileOwnership(6L))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
     void requireProfileOwnership_deniesNonOwners() {
-        authenticateAs(strangerDoctorAccount);
+        authenticateAs(strangerDoctor);
         assertThatThrownBy(() -> authorizationService.requireProfileOwnership(1L, 2L))
                 .isInstanceOf(AccessDeniedException.class);
 

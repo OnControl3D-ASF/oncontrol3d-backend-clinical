@@ -12,6 +12,7 @@ import com.oncontrol.oncontrolbackend.profiles.domain.model.Profile;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.ProfileRepository;
 import com.oncontrol.oncontrolbackend.profiles.domain.repository.PatientProfileRepository;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.AuthorizationService;
+import com.oncontrol.oncontrolbackend.shared.application.port.IdentityUnavailableException;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -60,6 +61,10 @@ public class DoctorController {
             Map<String, String> errorResponse = new HashMap<>();
             errorResponse.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(errorResponse);
+        } catch (IdentityUnavailableException e) {
+            Map<String, String> errorResponse = new HashMap<>();
+            errorResponse.put("message", "Identity service unavailable, try again later");
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(errorResponse);
         } catch (Exception e) {
             log.error("Error creating patient", e);
             Map<String, String> errorResponse = new HashMap<>();
