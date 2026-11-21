@@ -107,26 +107,9 @@ public class AuthController {
             try {
                 Object profile = profileService.loginProfile(request.getEmail(), request.getPassword());
                 
-                // Generate JWT token for the profile
-                String token = null;
-                if (profile instanceof com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse) {
-                    com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse doctorProfile = 
-                        (com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse) profile;
-                    token = jwtService.generateTokenForProfile(
-                        doctorProfile.getEmail(), 
-                        doctorProfile.getProfileId(), 
-                        "DOCTOR"
-                    );
-                } else if (profile instanceof com.oncontrol.oncontrolbackend.profiles.application.dto.PatientProfileResponse) {
-                    com.oncontrol.oncontrolbackend.profiles.application.dto.PatientProfileResponse patientProfile = 
-                        (com.oncontrol.oncontrolbackend.profiles.application.dto.PatientProfileResponse) profile;
-                    token = jwtService.generateTokenForProfile(
-                        patientProfile.getEmail(), 
-                        patientProfile.getProfileId(), 
-                        "PATIENT"
-                    );
-                }
-                
+                // Generate JWT token (claim contract) for the profile
+                String token = jwtService.generateTokenForProfile(profileService.resolveIdentity(request.getEmail()));
+
                 Map<String, Object> response = new HashMap<>();
                 response.put("profile", profile);
                 response.put("token", token);

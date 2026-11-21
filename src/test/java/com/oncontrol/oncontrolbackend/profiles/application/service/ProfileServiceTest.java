@@ -6,6 +6,7 @@ import com.oncontrol.oncontrolbackend.profiles.application.dto.CreateDoctorReque
 import com.oncontrol.oncontrolbackend.profiles.application.dto.CreatePatientRequest;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.PatientProfileResponse;
+import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.UpdateDoctorRequest;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.UpdatePatientRequest;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.DoctorProfile;
@@ -173,6 +174,37 @@ class ProfileServiceTest {
 
         assertThatThrownBy(() -> service.loginProfile(doctorAccount.getEmail(), "bad")).hasMessage("Invalid credentials");
         assertThatThrownBy(() -> service.loginProfile("ghost@mail.com", "pw")).hasMessage("Invalid credentials");
+    }
+
+    @Test
+    void resolveIdentity_doctor_usesProfilePkAndDoctorProfileId() {
+        Profile account = Fixtures.doctorAccount();
+        when(profileRepository.findByEmail(account.getEmail())).thenReturn(Optional.of(account));
+        when(doctorProfileRepository.findByProfileId(account.getId())).thenReturn(Optional.of(Fixtures.doctor()));
+
+        ProfileIdentity identity = service.resolveIdentity(account.getEmail());
+
+        assertThat(identity).isEqualTo(new ProfileIdentity(ProfileType.DOCTOR, "dr.garcia@hospital.com",
+                Fixtures.ORG_ID, Fixtures.DOCTOR_PROFILE_ACCOUNT_ID, Fixtures.DOCTOR_ID, null));
+    }
+
+    @Test
+    void resolveIdentity_patient_includesOwningDoctorAndPatientIds() {
+        Profile account = Fixtures.patientAccount();
+        when(profileRepository.findByEmail(account.getEmail())).thenReturn(Optional.of(account));
+        when(patientProfileRepository.findByProfileId(account.getId())).thenReturn(Optional.of(Fixtures.patient()));
+
+        ProfileIdentity identity = service.resolveIdentity(account.getEmail());
+
+        assertThat(identity).isEqualTo(new ProfileIdentity(ProfileType.PATIENT, "juan.perez@mail.com",
+                Fixtures.ORG_ID, Fixtures.PATIENT_PROFILE_ACCOUNT_ID, Fixtures.DOCTOR_ID, Fixtures.PATIENT_ID));
+    }
+
+    @Test
+    void resolveIdentity_unknownEmail_isRejected() {
+        when(profileRepository.findByEmail("ghost@mail.com")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.resolveIdentity("ghost@mail.com")).hasMessage("Invalid credentials");
     }
 
     @Test

@@ -168,6 +168,27 @@ public class ProfileService {
         }
     }
 
+    /**
+     * Resolves the ids that go into the JWT claim contract for a doctor/patient account.
+     */
+    @Transactional(readOnly = true)
+    public ProfileIdentity resolveIdentity(String email) {
+        Profile profile = profileRepository.findByEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
+        Long organizationId = profile.getUser().getId();
+
+        if (profile.getProfileType() == ProfileType.DOCTOR) {
+            DoctorProfile doctor = doctorProfileRepository.findByProfileId(profile.getId())
+                    .orElseThrow(() -> new RuntimeException("Doctor profile not found"));
+            return new ProfileIdentity(ProfileType.DOCTOR, profile.getEmail(), organizationId,
+                    profile.getId(), doctor.getId(), null);
+        }
+        PatientProfile patient = patientProfileRepository.findByProfileId(profile.getId())
+                .orElseThrow(() -> new RuntimeException("Patient profile not found"));
+        return new ProfileIdentity(ProfileType.PATIENT, profile.getEmail(), organizationId,
+                profile.getId(), patient.getDoctorProfile().getId(), patient.getId());
+    }
+
     // Query methods
     @Transactional(readOnly = true)
     public List<DoctorProfileResponse> getDoctorsByOrganizationId(Long organizationId) {

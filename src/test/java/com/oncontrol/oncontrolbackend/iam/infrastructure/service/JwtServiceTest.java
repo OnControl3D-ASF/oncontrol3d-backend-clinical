@@ -2,6 +2,9 @@ package com.oncontrol.oncontrolbackend.iam.infrastructure.service;
 
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.iam.domain.model.UserRole;
+import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
+import com.oncontrol.oncontrolbackend.profiles.domain.model.ProfileType;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.security.SignatureException;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,23 +44,56 @@ class JwtServiceTest {
                 .build();
     }
 
-    @Test
-    void generateToken_embedsSubjectRoleAndUserId() {
-        String token = jwtService.generateToken(organization());
+    private static Number number(Claims claims, String name) {
+        return claims.get(name, Number.class);
+    }
 
-        assertThat(jwtService.extractUsername(token)).isEqualTo("org@hospital.com");
-        assertThat(jwtService.extractRole(token)).isEqualTo(UserRole.ORGANIZATION);
-        assertThat(jwtService.extractUserId(token)).isEqualTo(7L);
-        assertThat(jwtService.extractExpiration(token)).isAfter(new Date());
+    private Claims claimsOf(String token) {
+        return jwtService.extractClaim(token, c -> c);
     }
 
     @Test
-    void generateTokenForProfile_embedsProfileClaims() {
-        String token = jwtService.generateTokenForProfile("doc@hospital.com", "DOC-001", "DOCTOR");
+    void generateToken_organization_emitsContractClaims() {
+        String token = jwtService.generateToken(organization());
 
-        assertThat(jwtService.extractUsername(token)).isEqualTo("doc@hospital.com");
-        assertThat(jwtService.<String>extractClaim(token, c -> c.get("profileId", String.class))).isEqualTo("DOC-001");
-        assertThat(jwtService.<String>extractClaim(token, c -> c.get("profileType", String.class))).isEqualTo("DOCTOR");
+        Claims claims = claimsOf(token);
+        assertThat(claims.getSubject()).isEqualTo("org@hospital.com");
+        assertThat(claims.getIssuer()).isEqualTo("oncontrol3d-clinical");
+        assertThat(claims.get("role", String.class)).isEqualTo("ORGANIZATION");
+        assertThat(number(claims, "organizationId").longValue()).isEqualTo(7L);
+        assertThat(claims.get("profileId")).isNull();
+        assertThat(claims.get("doctorProfileId")).isNull();
+        assertThat(claims.get("patientProfileId")).isNull();
+        assertThat(claims.getExpiration()).isAfter(new Date());
+    }
+
+    @Test
+    void generateTokenForProfile_doctor_emitsRoleAndNumericIds() {
+        ProfileIdentity doctor = new ProfileIdentity(ProfileType.DOCTOR, "doc@hospital.com", 1L, 5L, 7L, null);
+
+        Claims claims = claimsOf(jwtService.generateTokenForProfile(doctor));
+
+        assertThat(claims.getSubject()).isEqualTo("doc@hospital.com");
+        assertThat(claims.getIssuer()).isEqualTo("oncontrol3d-clinical");
+        assertThat(claims.get("role", String.class)).isEqualTo("DOCTOR");
+        assertThat(claims.get("organizationId")).isInstanceOf(Number.class);
+        assertThat(number(claims, "organizationId").longValue()).isEqualTo(1L);
+        assertThat(number(claims, "profileId").longValue()).isEqualTo(5L);
+        assertThat(number(claims, "doctorProfileId").longValue()).isEqualTo(7L);
+        assertThat(claims.get("patientProfileId")).isNull();
+    }
+
+    @Test
+    void generateTokenForProfile_patient_emitsPatientAndDoctorIds() {
+        ProfileIdentity patient = new ProfileIdentity(ProfileType.PATIENT, "pat@mail.com", 1L, 9L, 7L, 12L);
+
+        Claims claims = claimsOf(jwtService.generateTokenForProfile(patient));
+
+        assertThat(claims.get("role", String.class)).isEqualTo("PATIENT");
+        assertThat(number(claims, "profileId").longValue()).isEqualTo(9L);
+        assertThat(number(claims, "doctorProfileId").longValue()).isEqualTo(7L);
+        assertThat(number(claims, "patientProfileId").longValue()).isEqualTo(12L);
+        assertThat(number(claims, "organizationId").longValue()).isEqualTo(1L);
     }
 
     @Test

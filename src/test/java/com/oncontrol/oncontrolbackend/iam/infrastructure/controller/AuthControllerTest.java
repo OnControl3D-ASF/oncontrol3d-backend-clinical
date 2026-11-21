@@ -9,6 +9,8 @@ import com.oncontrol.oncontrolbackend.iam.infrastructure.security.LoginRateLimit
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.JwtService;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.DoctorProfileResponse;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.PatientProfileResponse;
+import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
+import com.oncontrol.oncontrolbackend.profiles.domain.model.ProfileType;
 import com.oncontrol.oncontrolbackend.profiles.application.service.ProfileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -115,7 +117,9 @@ class AuthControllerTest {
         when(authService.login(any())).thenThrow(new IllegalArgumentException("Invalid credentials"));
         DoctorProfileResponse doctor = DoctorProfileResponse.builder().email("doc@h.com").profileId("DOC-1").build();
         when(profileService.loginProfile("doc@h.com", "pw")).thenReturn(doctor);
-        when(jwtService.generateTokenForProfile("doc@h.com", "DOC-1", "DOCTOR")).thenReturn("doc-jwt");
+        ProfileIdentity identity = new ProfileIdentity(ProfileType.DOCTOR, "doc@h.com", 1L, 5L, 7L, null);
+        when(profileService.resolveIdentity("doc@h.com")).thenReturn(identity);
+        when(jwtService.generateTokenForProfile(identity)).thenReturn("doc-jwt");
 
         mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content(loginBody("doc@h.com", "pw")))
@@ -129,7 +133,9 @@ class AuthControllerTest {
         when(authService.login(any())).thenThrow(new IllegalArgumentException("Invalid credentials"));
         PatientProfileResponse patient = PatientProfileResponse.builder().email("pat@h.com").profileId("PAT-1").build();
         when(profileService.loginProfile("pat@h.com", "pw")).thenReturn(patient);
-        when(jwtService.generateTokenForProfile("pat@h.com", "PAT-1", "PATIENT")).thenReturn("pat-jwt");
+        ProfileIdentity identity = new ProfileIdentity(ProfileType.PATIENT, "pat@h.com", 1L, 9L, 7L, 12L);
+        when(profileService.resolveIdentity("pat@h.com")).thenReturn(identity);
+        when(jwtService.generateTokenForProfile(identity)).thenReturn("pat-jwt");
 
         mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
                         .content(loginBody("pat@h.com", "pw")))

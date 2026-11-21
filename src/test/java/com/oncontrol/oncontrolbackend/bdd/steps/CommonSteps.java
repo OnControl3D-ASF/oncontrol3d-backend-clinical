@@ -6,6 +6,7 @@ import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.iam.domain.model.UserRole;
 import com.oncontrol.oncontrolbackend.iam.domain.repository.UserRepository;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.JwtService;
+import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.DoctorProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.PatientProfile;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.Profile;
@@ -116,7 +117,8 @@ public class CommonSteps {
                 .totalReviews(0)
                 .build());
         world.add(new Actor(name, account.getEmail(),
-                jwtService.generateTokenForProfile(account.getEmail(), account.getProfileId(), "DOCTOR"),
+                jwtService.generateTokenForProfile(new ProfileIdentity(ProfileType.DOCTOR, account.getEmail(),
+                        organization.getId(), account.getId(), doctor.getId(), null)),
                 account.getId(), doctor.getId(), null, null));
     }
 
@@ -131,7 +133,8 @@ public class CommonSteps {
                 .cancerStage("II")
                 .build());
         world.add(new Actor(name, account.getEmail(),
-                jwtService.generateTokenForProfile(account.getEmail(), account.getProfileId(), "PATIENT"),
+                jwtService.generateTokenForProfile(new ProfileIdentity(ProfileType.PATIENT, account.getEmail(),
+                        doctor.getOrganization().getId(), account.getId(), doctor.getId(), patient.getId())),
                 account.getId(), null, patient.getId(), doctorName));
     }
 
