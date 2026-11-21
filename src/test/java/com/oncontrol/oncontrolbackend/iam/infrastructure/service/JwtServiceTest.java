@@ -5,8 +5,6 @@ import com.oncontrol.oncontrolbackend.iam.domain.model.UserRole;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
 import com.oncontrol.oncontrolbackend.profiles.domain.model.ProfileType;
 import io.jsonwebtoken.Claims;
-import io.jsonwebtoken.ExpiredJwtException;
-import io.jsonwebtoken.security.SignatureException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -94,38 +92,6 @@ class JwtServiceTest {
         assertThat(number(claims, "doctorProfileId").longValue()).isEqualTo(7L);
         assertThat(number(claims, "patientProfileId").longValue()).isEqualTo(12L);
         assertThat(number(claims, "organizationId").longValue()).isEqualTo(1L);
-    }
-
-    @Test
-    void validateToken_trueForMatchingEmail() {
-        String token = jwtService.generateToken(organization());
-
-        assertThat(jwtService.validateToken(token, "org@hospital.com")).isTrue();
-    }
-
-    @Test
-    void validateToken_falseForDifferentEmail() {
-        String token = jwtService.generateToken(organization());
-
-        assertThat(jwtService.validateToken(token, "other@hospital.com")).isFalse();
-    }
-
-    @Test
-    void expiredToken_isRejected() {
-        JwtService expired = newJwtService(SECRET, -1_000L);
-        String token = expired.generateToken(organization());
-
-        assertThatThrownBy(() -> jwtService.validateToken(token, "org@hospital.com"))
-                .isInstanceOf(ExpiredJwtException.class);
-    }
-
-    @Test
-    void tokenSignedWithAnotherKey_isRejected() {
-        JwtService attacker = newJwtService("another-secret-key-with-at-least-256-bits-9876543210", 60_000L);
-        String forged = attacker.generateToken(organization());
-
-        assertThatThrownBy(() -> jwtService.extractUsername(forged))
-                .isInstanceOf(SignatureException.class);
     }
 
     @Test

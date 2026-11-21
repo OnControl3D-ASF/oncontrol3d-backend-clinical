@@ -2,7 +2,10 @@ package com.oncontrol.oncontrolbackend.iam.infrastructure.service;
 
 import com.oncontrol.oncontrolbackend.iam.domain.model.User;
 import com.oncontrol.oncontrolbackend.profiles.application.dto.ProfileIdentity;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.AuthenticatedPrincipal;
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.PrincipalRole;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
@@ -15,6 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 @Service
@@ -26,6 +30,9 @@ public class JwtService {
 
     /** Issuer of tokens minted by clinical (auth service uses "oncontrol3d-auth"). */
     static final String ISSUER = "oncontrol3d-clinical";
+
+    /** Issuers accepted by the resource server (clinical until C3a, auth service). */
+    private static final Set<String> ACCEPTED_ISSUERS = Set.of(ISSUER, "oncontrol3d-auth");
 
     @Value("${authorization.jwt.secret}")
     private String secretKey;
@@ -81,17 +88,51 @@ public class JwtService {
                 .compact();
     }
 
-    public Boolean validateToken(String token, String email) {
-        final String username = extractUsername(token);
-        return (username.equals(email) && !isTokenExpired(token));
+    /**
+     * Verifies signature and expiry and maps the claims to an {@link AuthenticatedPrincipal}.
+     * Accepts tokens issued by clinical or by the auth service. Throws {@link JwtException}
+     * for any invalid, expired, foreign or incomplete token.
+     */
+    public AuthenticatedPrincipal parsePrincipal(String token) {
+        Claims claims = extractAllClaims(token);
+
+        if (!ACCEPTED_ISSUERS.contains(claims.getIssuer())) {
+            throw new JwtException("Unexpected token issuer");
+        }
+        String email = claims.getSubject();
+        if (email == null || email.isBlank()) {
+            throw new JwtException("Token has no subject");
+        }
+        PrincipalRole role = parseRole(claims.get("role", String.class));
+        Long organizationId = idClaim(claims, "organizationId");
+        if (organizationId == null) {
+            throw new JwtException("Token has no organizationId");
+        }
+        return new AuthenticatedPrincipal(role, email, organizationId,
+                idClaim(claims, "profileId"), idClaim(claims, "doctorProfileId"), idClaim(claims, "patientProfileId"));
     }
 
-    public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
+    private static PrincipalRole parseRole(String role) {
+        if (role == null) {
+            throw new JwtException("Token has no role");
+        }
+        try {
+            return PrincipalRole.valueOf(role);
+        } catch (IllegalArgumentException e) {
+            throw new JwtException("Unknown token role");
+        }
     }
 
-    public Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
+    /** jjwt yields Integer for small numbers: always read ids as Number -> long. */
+    private static Long idClaim(Claims claims, String name) {
+        Object value = claims.get(name);
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        throw new JwtException("Claim " + name + " must be numeric");
     }
 
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
@@ -105,10 +146,6 @@ public class JwtService {
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();
-    }
-
-    private Boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
     }
 
     private SecretKey getSigningKey() {

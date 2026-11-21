@@ -1,7 +1,7 @@
 package com.oncontrol.oncontrolbackend.iam.infrastructure.filter;
 
+import com.oncontrol.oncontrolbackend.iam.infrastructure.security.AuthenticatedPrincipal;
 import com.oncontrol.oncontrolbackend.iam.infrastructure.service.JwtService;
-import com.oncontrol.oncontrolbackend.iam.infrastructure.service.CustomUserDetailsService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -10,21 +10,28 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
+/**
+ * Stateless resource-server filter: verifies the bearer JWT and builds the principal from
+ * its claims. No database or auth-service call per request.
+ * An invalid token leaves the request unauthenticated (protected routes answer 401).
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    private static final String BEARER_PREFIX = "Bearer ";
+
     private final JwtService jwtService;
-    private final CustomUserDetailsService userDetailsService;
 
     @Override
     protected void doFilterInternal(
@@ -32,65 +39,28 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
-        
-        String requestURI = request.getRequestURI();
-        log.debug("🔐 JWT Filter - Processing request: {} {}", request.getMethod(), requestURI);
-        
-        final String authHeader = request.getHeader("Authorization");
-        final String jwt;
-        final String userEmail;
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            // Solo registrar warning si NO es una ruta pública
-            if (!isPublicRoute(requestURI)) {
-                log.debug("⚠️  No Authorization header for protected route: {}", requestURI);
-            }
+        final String authHeader = request.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith(BEARER_PREFIX)) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        jwt = authHeader.substring(7);
-        log.debug("🔑 JWT Token found: {}...", jwt.substring(0, Math.min(20, jwt.length())));
-        
         try {
-            userEmail = jwtService.extractUsername(jwt);
-            log.debug("👤 Username extracted from token: {}", userEmail);
-
-            if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
-                
-                if (jwtService.validateToken(jwt, userEmail)) {
-                    log.info("✅ JWT Token validated for user: {} - Authorities: {}", userEmail, userDetails.getAuthorities());
-                    UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
-                            userDetails,
-                            null,
-                            userDetails.getAuthorities()
-                    );
-                    authToken.setDetails(
-                            new WebAuthenticationDetailsSource().buildDetails(request)
-                    );
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                } else {
-                    log.error("❌ JWT Token validation failed for user: {}", userEmail);
-                }
+            AuthenticatedPrincipal principal = jwtService.parsePrincipal(authHeader.substring(BEARER_PREFIX.length()));
+            if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                        principal,
+                        null,
+                        List.of(new SimpleGrantedAuthority("ROLE_" + principal.role().name()))
+                );
+                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                SecurityContextHolder.getContext().setAuthentication(authToken);
             }
         } catch (Exception e) {
-            log.error("❌ Error processing JWT token: {}", e.getMessage());
+            log.warn("Rejected bearer token: {}", e.getMessage());
         }
-        
-        filterChain.doFilter(request, response);
-    }
 
-    /**
-     * Verifica si la ruta es pública y no requiere autenticación
-     */
-    private boolean isPublicRoute(String requestURI) {
-        return requestURI.equals("/") ||
-               requestURI.equals("/health") ||
-               requestURI.equals("/favicon.ico") ||
-               requestURI.equals("/error") ||
-               requestURI.startsWith("/api/auth/") ||
-               requestURI.startsWith("/swagger-ui") ||
-               requestURI.startsWith("/api-docs");
+        filterChain.doFilter(request, response);
     }
 }
