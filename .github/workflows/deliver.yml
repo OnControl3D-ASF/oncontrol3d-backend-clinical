@@ -68,7 +68,7 @@ jobs:
           out = {k: v["value"] for k, v in raw.items()}
           keys = {
               "acr": "acrLoginServer", "aks": "aksName", "client_id": "clinicalWorkloadIdentityClientId",
-              "key_vault": "keyVaultName", "db_url": "postgresJdbcUrl", "db_user": "postgresAdministratorLogin",
+              "key_vault": "keyVaultName", "postgres_fqdn": "postgresFqdn", "db_user": "postgresAdministratorLogin",
               "servicebus": "serviceBusNamespace",
           }
           values = {name: out.get(key, "") for name, key in keys.items()}
@@ -110,6 +110,20 @@ jobs:
           az aks get-credentials -g "${{ vars.AZURE_RESOURCE_GROUP }}" -n "${{ steps.infra.outputs.aks }}" --overwrite-existing
           kubelogin convert-kubeconfig -l azurecli
 
+      # The namespace lives in deploy/env/<env>.env (single source of truth, also read by
+      # render.sh): dev -> oncontrol, prod -> oncontrol-prod.
+      - name: Read target namespace
+        id: target
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -a
+          # shellcheck disable=SC1090
+          . "deploy/env/$ENVIRONMENT.env"
+          set +a
+          test -n "${NAMESPACE:-}"
+          echo "namespace=$NAMESPACE" >> "$GITHUB_OUTPUT"
+
       - name: Render and apply manifests
         id: apply
         if: steps.infra.outputs.ready == 'true'
@@ -119,7 +133,7 @@ jobs:
           WORKLOAD_IDENTITY_CLIENT_ID: ${{ steps.infra.outputs.client_id }}
           TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
           KEY_VAULT_NAME: ${{ steps.infra.outputs.key_vault }}
-          DB_URL: ${{ steps.infra.outputs.db_url }}
+          POSTGRES_FQDN: ${{ steps.infra.outputs.postgres_fqdn }}
           DB_USERNAME: ${{ steps.infra.outputs.db_user }}
           SERVICEBUS_NAMESPACE: ${{ steps.infra.outputs.servicebus }}
         run: |
@@ -128,24 +142,32 @@ jobs:
 
       - name: Wait for rollout (readiness probes)
         if: steps.infra.outputs.ready == 'true'
-        run: kubectl -n oncontrol rollout status "deployment/$DEPLOYMENT" --timeout=420s
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
+        run: kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=420s
 
       - name: Smoke test
         if: steps.infra.outputs.ready == 'true'
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
         run: |
-          body=$(kubectl -n oncontrol exec "deploy/$DEPLOYMENT" -- wget -qO- http://127.0.0.1:8081/health)
+          body=$(kubectl -n "$NAMESPACE" exec "deploy/$DEPLOYMENT" -- wget -qO- http://127.0.0.1:8081/health)
           echo "health: $body"
           echo "$body" | grep -q '"status":"UP"'
 
       - name: Roll back on failure
         if: failure() && steps.apply.outcome == 'success'
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
         run: |
           echo "::error::Delivery to ${{ inputs.environment }} failed: rolling back to the previous revision."
-          kubectl -n oncontrol rollout undo "deployment/$DEPLOYMENT"
-          kubectl -n oncontrol rollout status "deployment/$DEPLOYMENT" --timeout=300s || true
+          kubectl -n "$NAMESPACE" rollout undo "deployment/$DEPLOYMENT"
+          kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=300s || true
 
       - name: Delivery summary
         if: steps.infra.outputs.ready == 'true'
+        env:
+          NAMESPACE: ${{ steps.target.outputs.namespace }}
         run: |
           {
             echo "### Clinical Service delivered to \`${{ inputs.environment }}\`"
@@ -153,7 +175,7 @@ jobs:
             echo "- Image: \`${{ steps.push.outputs.image }}\`"
             echo "- Tags: \`${{ inputs.image-tags }}\`"
             echo "- Pods:"
-            kubectl -n oncontrol get pods -l "app.kubernetes.io/name=$DEPLOYMENT" \
+            kubectl -n "$NAMESPACE" get pods -l "app.kubernetes.io/name=$DEPLOYMENT" \
               -o custom-columns=NAME:.metadata.name,READY:.status.containerStatuses[0].ready,IMAGE:.spec.containers[0].image --no-headers \
               | sed 's/^/  - /'
           } >> "$GITHUB_STEP_SUMMARY"

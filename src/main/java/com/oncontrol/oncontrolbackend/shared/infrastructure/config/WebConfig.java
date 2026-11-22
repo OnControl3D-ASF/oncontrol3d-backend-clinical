@@ -9,8 +9,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 public class WebConfig implements WebMvcConfigurer {
 
     /**
-     * Explicit allowed origins. Configurable via the CORS_ALLOWED_ORIGINS env var
-     * (comma-separated). The broad "https://*.vercel.app" wildcard was removed because,
+     * Explicit allowed origins. Configurable via the APP_CORS_ALLOWED_ORIGINS env var
+     * (property {@code app.cors.allowed-origins}, comma-separated). On AKS it is fed from the
+     * edge ConfigMap key PUBLIC_ORIGIN. The broad "https://*.vercel.app" wildcard was removed because,
      * combined with allowCredentials(true), it let ANY Vercel deployment send
      * credentialed requests. Add your real frontend URL to the env var if it changes.
      */
