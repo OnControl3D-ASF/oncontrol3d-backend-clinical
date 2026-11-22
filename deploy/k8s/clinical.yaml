@@ -2,14 +2,19 @@
 #
 # Template rendered by the CI/CD pipeline with envsubst (explicit variable list). Values come
 # from the IaC deployment outputs (single source of truth) and deploy/env/<env>.env:
-#   NAMESPACE, IMAGE (registry/repo@sha256:digest), APP_VERSION, REPLICAS,
-#   CPU_REQUEST, CPU_LIMIT, MEMORY_REQUEST, MEMORY_LIMIT,
+#   NAMESPACE, IMAGE (registry/repo@sha256:digest), APP_VERSION, MIN_REPLICAS, MAX_REPLICAS,
+#   CPU_REQUEST, CPU_LIMIT, MEMORY_REQUEST, MEMORY_LIMIT, SEEDING_ENABLED,
 #   WORKLOAD_IDENTITY_CLIENT_ID, TENANT_ID, KEY_VAULT_NAME,
-#   DB_URL, DB_USERNAME, SERVICEBUS_NAMESPACE
+#   POSTGRES_FQDN, DB_NAME, DB_USERNAME, SERVICEBUS_NAMESPACE
 #
-# Secrets (DB_PASSWORD, JWT_SECRET) never pass through CI: the Secrets Store CSI driver
+# Secrets (DB_PASSWORD, JWT_SECRET, AUTH_INTERNAL_TOKEN, SEED_USER_PASSWORD) never pass through CI: the Secrets Store CSI driver
 # reads them from Key Vault with the pod's workload identity and syncs them into the
-# "clinical-secrets" Kubernetes Secret consumed as environment variables.
+# "clinical-secrets" Kubernetes Secret consumed as environment variables. The Key Vault
+# secrets auth-internal-token and seed-user-password MUST exist before the first deploy: a
+# missing object keeps the pod in ContainerCreating (the CSI mount fails).
+#
+# The Deployment has no "replicas": the HorizontalPodAutoscaler owns the count (a fixed value
+# here would reset it on every apply).
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -48,6 +53,12 @@ spec:
         - |
           objectName: jwt-secret
           objectType: secret
+        - |
+          objectName: auth-internal-token
+          objectType: secret
+        - |
+          objectName: seed-user-password
+          objectType: secret
   secretObjects:
     - secretName: clinical-secrets
       type: Opaque
@@ -56,6 +67,34 @@ spec:
           key: DB_PASSWORD
         - objectName: jwt-secret
           key: JWT_SECRET
+        - objectName: auth-internal-token
+          key: AUTH_INTERNAL_TOKEN
+        - objectName: seed-user-password
+          key: SEED_USER_PASSWORD
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clinical-config
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+data:
+  PORT: "8081"
+  # Azure Database for PostgreSQL requires TLS.
+  DB_URL: "jdbc:postgresql://${POSTGRES_FQDN}:5432/${DB_NAME}?sslmode=require"
+  DB_USERNAME: "${DB_USERNAME}"
+  IMAGING_SERVICE_URL: "http://imaging.${NAMESPACE}.svc.cluster.local:8001"
+  ORTHANC_URL: "http://orthanc.${NAMESPACE}.svc.cluster.local:8042"
+  SERVICEBUS_NAMESPACE: "${SERVICEBUS_NAMESPACE}"
+  ALERT_QUEUE_NAME: "toxicity-alerts"
+  # Auth Service (accounts live there). Dual-write: clinical keeps its legacy iam tables and
+  # provisions the account in auth (503 and no row if auth is down).
+  AUTH_SERVICE_URL: "http://auth.${NAMESPACE}.svc.cluster.local:8082"
+  AUTH_PROVISIONING_ENABLED: "true"
+  APP_DATA_SEEDING_ENABLED: "${SEEDING_ENABLED}"
+  JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -67,7 +106,6 @@ metadata:
     app.kubernetes.io/part-of: oncontrol3d
     app.kubernetes.io/version: "${APP_VERSION}"
 spec:
-  replicas: ${REPLICAS}
   revisionHistoryLimit: 5
   selector:
     matchLabels:
@@ -94,6 +132,39 @@ spec:
         fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
+      # Bounded wait for the auth service: never blocks the rollout (always exits 0). If auth is
+      # still down afterwards, provisioning fails closed (503, no row) rather than half-working.
+      initContainers:
+        - name: wait-auth
+          image: ${IMAGE}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              i=0
+              while [ "$i" -lt 24 ]; do
+                if wget -qO- -T 3 "$AUTH_SERVICE_URL/health" >/dev/null 2>&1; then
+                  echo "auth is up"; exit 0
+                fi
+                i=$((i+1)); sleep 5
+              done
+              echo "auth not ready after 120s, continuing"; exit 0
+          envFrom:
+            - configMapRef:
+                name: clinical-config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       containers:
         - name: clinical
           image: ${IMAGE}
@@ -102,23 +173,17 @@ spec:
             - name: http
               containerPort: 8081
           env:
-            - name: PORT
-              value: "8081"
-            - name: DB_URL
-              value: "${DB_URL}"
-            - name: DB_USERNAME
-              value: "${DB_USERNAME}"
-            - name: IMAGING_SERVICE_URL
-              value: "http://imaging.${NAMESPACE}.svc.cluster.local:8001"
-            - name: ORTHANC_URL
-              value: "http://orthanc.${NAMESPACE}.svc.cluster.local:8042"
-            - name: SERVICEBUS_NAMESPACE
-              value: "${SERVICEBUS_NAMESPACE}"
-            - name: ALERT_QUEUE_NAME
-              value: "toxicity-alerts"
-            - name: JAVA_TOOL_OPTIONS
-              value: "-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError"
+            # Public origin published by the edge (infra k8s/platform). optional: the pod
+            # still starts before the edge exists (CORS then keeps the application default).
+            - name: APP_CORS_ALLOWED_ORIGINS
+              valueFrom:
+                configMapKeyRef:
+                  name: edge
+                  key: PUBLIC_ORIGIN
+                  optional: true
           envFrom:
+            - configMapRef:
+                name: clinical-config
             - secretRef:
                 name: clinical-secrets
           resources:
@@ -189,3 +254,101 @@ spec:
     - name: http
       port: 8081
       targetPort: http
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: clinical
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: clinical
+  minReplicas: ${MIN_REPLICAS}
+  maxReplicas: ${MAX_REPLICAS}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# L4 only: path restriction is enforced by the edge routing (infra k8s/platform).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: clinical
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: clinical
+    app.kubernetes.io/part-of: oncontrol3d
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: clinical
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Public traffic through the Traefik edge.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 8081
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # In-cluster dependencies.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: auth
+      ports:
+        - protocol: TCP
+          port: 8082
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: imaging
+      ports:
+        - protocol: TCP
+          port: 8001
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orthanc
+      ports:
+        - protocol: TCP
+          port: 8042
+    # Azure services (not pod IPs): PostgreSQL 5432, Service Bus 443 (HTTPS) / 5671 (AMQPS).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 5671

@@ -110,26 +110,10 @@ jobs:
   manifests:
     name: Validate Kubernetes manifests
     runs-on: ubuntu-latest
-    env:
-      KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.8.0@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e
     steps:
       - uses: actions/checkout@v7
 
       # Same render script as the deployment, with placeholder values: proves every variable
-      # is provided and the result is schema-valid for both environments.
+      # is provided and the result is schema-valid for both environments (deploy/validate.sh).
       - name: Render and validate (dev, prod)
-        env:
-          IMAGE: example.azurecr.io/oncontrol3d/clinical@sha256:0000000000000000000000000000000000000000000000000000000000000000
-          APP_VERSION: ci-validation
-          WORKLOAD_IDENTITY_CLIENT_ID: 00000000-0000-0000-0000-000000000000
-          TENANT_ID: 00000000-0000-0000-0000-000000000000
-          KEY_VAULT_NAME: kv-validation
-          DB_URL: jdbc:postgresql://validation:5432/OnControlSem?sslmode=require
-          DB_USERNAME: validation
-          SERVICEBUS_NAMESPACE: sb-validation.servicebus.windows.net
-        run: |
-          mkdir -p rendered
-          for env in dev prod; do deploy/render.sh "$env" > "rendered/$env.yaml"; done
-          # SecretProviderClass is a CRD without a public schema: skipped, everything else is strict.
-          docker run --rm -v "$PWD/rendered:/m:ro" "$KUBECONFORM_IMAGE" \
-            -strict -summary -ignore-missing-schemas -kubernetes-version 1.33.0 /m/dev.yaml /m/prod.yaml
+        run: deploy/validate.sh
